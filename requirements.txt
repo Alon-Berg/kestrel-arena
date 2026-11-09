@@ -1,0 +1,6 @@
+chess>=1.10          # python-chess: all chess rules, SAN, PGN
+pywebview>=5         # the app window (Edge WebView2 on Windows)
+psutil               # optional: kills engine child processes cleanly
+# only to build the exe (python tools/build_exe.py):
+# pyinstaller
+# pillow

@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+
+# build output (python tools/build_exe.py)
+build/
+dist/
+assets/icon.ico
+
+# the engines are not part of the source: see engines/README.md
+engines/*
+!engines/README.md
+
+# your settings, saved tournaments and run-time files
+data/settings.json
+data/tournaments/
+data/dev_session.json
+data/webview/

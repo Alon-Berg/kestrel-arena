@@ -1,0 +1,608 @@
+[
+{
+"name": "Stockfish",
+"id_name": "Stockfish 19",
+"rating": 3846,
+"ccrl": 3792
+},
+{
+"name": "Triumviratus",
+"id_name": "Triumviratus - 8.0",
+"rating": 3821,
+"ccrl": 3784
+},
+{
+"name": "Reckless",
+"id_name": "Reckless 0.9.0",
+"rating": 3811,
+"ccrl": 3766
+},
+{
+"name": "Coda",
+"id_name": "Coda 0.9.5",
+"rating": 3802,
+"ccrl": 3769
+},
+{
+"name": "pawnocchio",
+"id_name": "pawnocchio 2.0.1",
+"rating": 3776,
+"ccrl": 3755
+},
+{
+"name": "Gaia",
+"id_name": "Gaia 4.4.1",
+"rating": 3776,
+"ccrl": 3764
+},
+{
+"name": "PlentyChess",
+"id_name": "PlentyChess 8.0.0",
+"rating": 3766,
+"ccrl": 3773
+},
+{
+"name": "Caissa",
+"id_name": "Caissa 2.0 BMI2",
+"rating": 3765,
+"ccrl": 3748
+},
+{
+"name": "Obsidian",
+"id_name": "Obsidian 16.0",
+"rating": 3754,
+"ccrl": 3746
+},
+{
+"name": "Astra",
+"id_name": "Astra 7.0",
+"rating": 3754,
+"ccrl": 3730
+},
+{
+"name": "Berserk",
+"id_name": "Berserk 14",
+"rating": 3751,
+"ccrl": 3737
+},
+{
+"name": "Cinder",
+"id_name": "Cinder 0.6.1",
+"rating": 3747,
+"ccrl": 3760
+},
+{
+"name": "Viridithas",
+"id_name": "Viridithas 20.0.0",
+"rating": 3744,
+"ccrl": 3748
+},
+{
+"name": "Alexandria",
+"id_name": "Alexandria-9.1.0",
+"rating": 3741,
+"ccrl": 3751
+},
+{
+"name": "JustBot",
+"id_name": "JustBot 0.5.0",
+"rating": 3737,
+"ccrl": 3703
+},
+{
+"name": "Halogen",
+"id_name": "Halogen 16.8.0",
+"rating": 3735,
+"ccrl": 3720
+},
+{
+"name": "Integral",
+"id_name": "Integral v8",
+"rating": 3725,
+"ccrl": 3751
+},
+{
+"name": "Raphael",
+"id_name": "Raphael 4.2.0",
+"rating": 3725,
+"ccrl": 3730
+},
+{
+"name": "Clover",
+"id_name": "Clover 9.1",
+"rating": 3723,
+"ccrl": 3726
+},
+{
+"name": "Horsie",
+"id_name": "Horsie 1.1.0",
+"rating": 3717,
+"ccrl": 3709
+},
+{
+"name": "RubiChess",
+"id_name": "RubiChess 20240817 (bmi2)",
+"rating": 3717,
+"ccrl": 3691
+},
+{
+"name": "Starzix",
+"id_name": "Starzix 6.1",
+"rating": 3715,
+"ccrl": 3689
+},
+{
+"name": "Hobbes",
+"id_name": "Hobbes 3.0",
+"rating": 3712,
+"ccrl": 3743
+},
+{
+"name": "Renegade",
+"id_name": "Renegade 1.3.1",
+"rating": 3711,
+"ccrl": 3693
+},
+{
+"name": "Igel",
+"id_name": "Igel 3.8.0 64 BMI2 AVX2",
+"rating": 3708,
+"ccrl": 3692
+},
+{
+"name": "Minke",
+"id_name": "Minke 7.0.0",
+"rating": 3701,
+"ccrl": 3700
+},
+{
+"name": "Stormphrax",
+"id_name": "Stormphrax 8.0.0",
+"rating": 3700,
+"ccrl": 3744
+},
+{
+"name": "Quanticade",
+"id_name": "Quanticade Cronus 3.0",
+"rating": 3699,
+"ccrl": 3716
+},
+{
+"name": "Revenge",
+"id_name": "Revenge 4.0 avx2",
+"rating": 3697,
+"ccrl": 3650
+},
+{
+"name": "Tcheran",
+"id_name": "Tcheran v14.0",
+"rating": 3696,
+"ccrl": 3698
+},
+{
+"name": "Motor",
+"id_name": "Motor 0.9.0",
+"rating": 3695,
+"ccrl": 3694
+},
+{
+"name": "Rebel",
+"id_name": "Rebel 17.0",
+"rating": 3695,
+"ccrl": 3646
+},
+{
+"name": "Devre",
+"id_name": "Devre 7.0",
+"rating": 3695,
+"ccrl": 3704
+},
+{
+"name": "Tarnished",
+"id_name": "Tarnished v6.0 (Eternal)",
+"rating": 3691,
+"ccrl": 3729
+},
+{
+"name": "Icarus",
+"id_name": "Icarus 1.1.1",
+"rating": 3683,
+"ccrl": 3671
+},
+{
+"name": "Arasan",
+"id_name": "Arasan 26.1",
+"rating": 3677,
+"ccrl": 3657
+},
+{
+"name": "ChessSystemTal",
+"id_name": "Chess System Tal 3.00",
+"rating": 3676,
+"ccrl": 3693
+},
+{
+"name": "Heimdall",
+"id_name": "Heimdall 1.5.1",
+"rating": 3675,
+"ccrl": 3670
+},
+{
+"name": "PZChessBot",
+"id_name": "PZChessBot v7.1",
+"rating": 3671,
+"ccrl": 3711
+},
+{
+"name": "Koivisto",
+"id_name": "Koivisto 9.0",
+"rating": 3667,
+"ccrl": 3631
+},
+{
+"name": "Seer",
+"id_name": "Seer 2.8.0",
+"rating": 3665,
+"ccrl": 3639
+},
+{
+"name": "Zangdar",
+"id_name": "Zangdar 7",
+"rating": 3661,
+"ccrl": 3669
+},
+{
+"name": "Cataphract",
+"id_name": "Cataphract 1.5.1",
+"rating": 3660,
+"ccrl": 3651
+},
+{
+"name": "Velvet",
+"id_name": "Velvet v8.1.1",
+"rating": 3657,
+"ccrl": 3647
+},
+{
+"name": "Bread",
+"id_name": "Bread Engine 4.0.0",
+"rating": 3656,
+"ccrl": 3624
+},
+{
+"name": "ZigQueen",
+"id_name": "zigqueen 6.3.0",
+"rating": 3655,
+"ccrl": 3648
+},
+{
+"name": "Uralochka",
+"id_name": "Uralochka v3.42a",
+"rating": 3647,
+"ccrl": 3688
+},
+{
+"name": "Lizard",
+"id_name": "Lizard 11.2.0",
+"rating": 3647,
+"ccrl": 3693
+},
+{
+"name": "Clarity",
+"id_name": "Clarity V8.0.0",
+"rating": 3643,
+"ccrl": 3632
+},
+{
+"name": "Booot",
+"id_name": "Booot 7.4_AVX2",
+"rating": 3629,
+"ccrl": 3651
+},
+{
+"name": "Peacekeeper",
+"id_name": "Peacekeeper v3.01",
+"rating": 3627,
+"ccrl": 3612
+},
+{
+"name": "Titan",
+"id_name": "Titan 1.1.0",
+"rating": 3627,
+"ccrl": 3654
+},
+{
+"name": "rofChade",
+"id_name": "rofChade 3.1",
+"rating": 3624,
+"ccrl": 3628
+},
+{
+"name": "akimbo",
+"id_name": "akimbo 1.0.0",
+"rating": 3622,
+"ccrl": 3566
+},
+{
+"name": "SimpleChess",
+"id_name": "SimpleChess 3.6.0",
+"rating": 3616,
+"ccrl": 3561
+},
+{
+"name": "Calvin",
+"id_name": "Calvin 6.1.1",
+"rating": 3614,
+"ccrl": 3606
+},
+{
+"name": "Texel",
+"id_name": "Texel 1.12",
+"rating": 3613,
+"ccrl": 3561
+},
+{
+"name": "Turbulence",
+"id_name": "Turbulence_v4 v0.0.8",
+"rating": 3612,
+"ccrl": 3576
+},
+{
+"name": "Fire",
+"id_name": "Fire 10 x64 avx2",
+"rating": 3603,
+"ccrl": 3482
+},
+{
+"name": "Eleanor",
+"id_name": "Eleanor v4.1",
+"rating": 3602,
+"ccrl": 3587
+},
+{
+"name": "BlackMarlin",
+"id_name": "Black Marlin 9.0",
+"rating": 3600,
+"ccrl": 3589
+},
+{
+"name": "Altair",
+"id_name": "Altair 7.0.0",
+"rating": 3597,
+"ccrl": 3579
+},
+{
+"name": "Prune",
+"id_name": "Prune 4.0.1",
+"rating": 3595,
+"ccrl": 3644
+},
+{
+"name": "Elixir",
+"id_name": "Elixir 3.0",
+"rating": 3595,
+"ccrl": 3567
+},
+{
+"name": "Patricia",
+"id_name": "Patricia 5.1",
+"rating": 3593,
+"ccrl": 3539
+},
+{
+"name": "Oxide",
+"id_name": "Oxide 3.0.0",
+"rating": 3593,
+"ccrl": 3536
+},
+{
+"name": "pawn",
+"id_name": "pawn v4.0-dirty",
+"rating": 3590,
+"ccrl": 3553
+},
+{
+"name": "Petrel",
+"id_name": "Petrel 4.1 JA",
+"rating": 3583,
+"ccrl": null
+},
+{
+"name": "Sykora",
+"id_name": "Sykora 4.1",
+"rating": 3581,
+"ccrl": 3589
+},
+{
+"name": "StockDory",
+"id_name": "StockDory 0.3",
+"rating": 3579,
+"ccrl": 3541
+},
+{
+"name": "Equisetum",
+"id_name": "Equisetum 1.0.variegatum.g",
+"rating": 3570,
+"ccrl": 3560
+},
+{
+"name": "Ynode",
+"id_name": "Ynode 0234",
+"rating": 3568,
+"ccrl": 3572
+},
+{
+"name": "Kociolek",
+"id_name": "Kociolek 2.3 (own build)",
+"rating": 3567,
+"ccrl": 3493
+},
+{
+"name": "Gyatso",
+"id_name": "Gyatso 1.6.0",
+"rating": 3557,
+"ccrl": 3568
+},
+{
+"name": "RodentV",
+"id_name": "Rodent V 1.2 AVX2",
+"rating": 3556,
+"ccrl": 3538
+},
+{
+"name": "Rice",
+"id_name": "Rice 8.0.0",
+"rating": 3555,
+"ccrl": 3529
+},
+{
+"name": "Quirky",
+"id_name": "Quirky 3.0",
+"rating": 3553,
+"ccrl": 3548
+},
+{
+"name": "Sapling",
+"id_name": "Sapling 2.0.0",
+"rating": 3551,
+"ccrl": 3520
+},
+{
+"name": "Saturn",
+"id_name": "saturn 1.3",
+"rating": 3545,
+"ccrl": 3447
+},
+{
+"name": "Cwtch",
+"id_name": "Cwtch 6",
+"rating": 3544,
+"ccrl": 3454
+},
+{
+"name": "Yukari",
+"id_name": "Yukari 2025.11.1",
+"rating": 3544,
+"ccrl": 3539
+},
+{
+"name": "Serendipity",
+"id_name": "Serendipity 1.0",
+"rating": 3543,
+"ccrl": 3551
+},
+{
+"name": "Wasp",
+"id_name": "Wasp 7.16",
+"rating": 3538,
+"ccrl": 3523
+},
+{
+"name": "Sirius",
+"id_name": "Sirius 9.0",
+"rating": 3538,
+"ccrl": 3529
+},
+{
+"name": "Leorik",
+"id_name": "Leorik 3.2",
+"rating": 3536,
+"ccrl": 3490
+},
+{
+"name": "Marvin",
+"id_name": "Marvin 6.3.0",
+"rating": 3536,
+"ccrl": 3458
+},
+{
+"name": "Willow",
+"id_name": "Willow 4.0",
+"rating": 3536,
+"ccrl": 3531
+},
+{
+"name": "Carp",
+"id_name": "Carp 3.0.1",
+"rating": 3531,
+"ccrl": 3525
+},
+{
+"name": "Minic",
+"id_name": "Minic 3.46 (energy-monitor patch, own build)",
+"rating": 3528,
+"ccrl": 3552
+},
+{
+"name": "Winter",
+"id_name": "Winter 5.0 BMI2 JA",
+"rating": 3523,
+"ccrl": 3544
+},
+{
+"name": "Thrawn",
+"id_name": "Thrawn v3.2",
+"rating": 3517,
+"ccrl": 3590
+},
+{
+"name": "Panda",
+"id_name": "Panda 2.0",
+"rating": 3515,
+"ccrl": 3522
+},
+{
+"name": "Tucano",
+"id_name": "Tucano 12.00",
+"rating": 3512,
+"ccrl": 3489
+},
+{
+"name": "Smallbrain",
+"id_name": "Smallbrain 7",
+"rating": 3503,
+"ccrl": 3454
+},
+{
+"name": "Midnight",
+"id_name": "Midnight v9",
+"rating": 3502,
+"ccrl": 3476
+},
+{
+"name": "Endspiel",
+"id_name": "Endspiel 2.0.0",
+"rating": 3500,
+"ccrl": 3504
+},
+{
+"name": "Grail",
+"id_name": "Grail 3.0.0",
+"rating": 3492,
+"ccrl": 3490
+},
+{
+"name": "Lunar",
+"id_name": "lunar 0.4.0",
+"rating": 3489,
+"ccrl": 3514
+},
+{
+"name": "Bagatur",
+"id_name": "Bagatur 5.5c",
+"rating": 3473,
+"ccrl": 3487
+},
+{
+"name": "Schoenemann",
+"id_name": "Schoenemann 0.5.0",
+"rating": 3468,
+"ccrl": 3504
+},
+{
+"name": "Kestrel 3.2",
+"id_name": "Kestrel 3.2",
+"rating": 3581,
+"ccrl": null
+}
+]

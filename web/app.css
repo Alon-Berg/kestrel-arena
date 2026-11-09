@@ -21,7 +21,7 @@ button, input, select, textarea { font: inherit; color: inherit; }
 /* window frame: title line, classic tabs, content */
 #app { display: flex; flex-direction: column; height: 100vh; }
 .topbar { display: flex; align-items: flex-end; gap: 18px; padding: 6px 10px 0; background: var(--head); border-bottom: 1px solid var(--line); flex: none; }
-.brand { font-weight: 700; font-size: 14px; padding-bottom: 6px; } .brand small { font-weight: 400; color: var(--muted); margin-left: 6px; }
+.brand { font-weight: 700; font-size: 14px; padding-bottom: 4px; display: flex; align-items: center; gap: 7px; } .brand img { display: block; } .brand small { font-weight: 400; color: var(--muted); margin-left: 2px; }
 .tabs { display: flex; gap: 2px; }
 .tab-btn { background: #d6d6d6; border: 1px solid var(--line); border-bottom: 0; padding: 4px 16px; cursor: pointer; position: relative; top: 1px; }
 .tab-btn:hover { background: #e6e6e6; } .tab-btn.active { background: var(--bg); font-weight: 600; padding-bottom: 5px; }

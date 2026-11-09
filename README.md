@@ -1,3 +1,5 @@
+<p align="center"><img src="assets/logo/kestrel-logo-256.png" width="128" alt="Kestrel logo"></p>
+
 # Kestrel Arena
 
 A desktop app that runs chess-engine tournaments with real games between UCI engines, and lets you play against and analyse with the **Kestrel** engine that is bundled with it. Every result comes from an actual game - nothing is estimated or drawn with random numbers.
@@ -28,7 +30,8 @@ Windows 10/11 with Python 3.12 (Edge WebView2 is part of Windows 11).
 
 ## Files
 * `data/settings.json` - engine list and preferences; `data/tournaments/` - saved tournaments (delete a folder to remove one). Both are created when you use the app and are not part of the repository.
-* Source: `arena/` (Python: UCI, games, formats, tournaments, server), `web/` (the interface), `tests/` (`python tests/smoke_backend.py`, `smoke_resume.py`, `test_formats.py`), `tools/` (`build_exe.py`, `make_openings.py`, `make_roster_snapshot.py`).
+* Source: `arena/` (Python: UCI, games, formats, tournaments, server), `web/` (the interface), `tests/` (`python tests/smoke_backend.py`, `smoke_resume.py`, `test_formats.py`), `tools/` (`build_exe.py`, `make_openings.py`, `make_roster_snapshot.py`, `make_logo.py`).
+* `assets/logo/` - the Kestrel logo (a white K on a small chessboard; SVG, PNG 16-1024 px, ICO), the same one for the engine and the app; `python tools/make_logo.py` redraws it.
 * `data/openings.epd` (600 balanced opening positions made with Kestrel) and `data/roster_ratings.json` (ratings of the 100-engine roster tournament, used when importing the roster) are shipped with the app.
 
 ## Third-party software

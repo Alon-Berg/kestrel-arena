@@ -5,7 +5,6 @@ __pycache__/
 # build output (python tools/build_exe.py)
 build/
 dist/
-assets/icon.ico
 
 # the engines are not part of the source: see engines/README.md
 engines/*

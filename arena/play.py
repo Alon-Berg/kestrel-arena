@@ -1,11 +1,13 @@
 """Human-vs-engine games and engine analysis for the Play tab. Chess rules come from python-chess; the browser only draws the board."""
 import queue
+import random
 import threading
 import time
 
 import chess
 import chess.pgn
 
+from . import levels as L
 from .game import _TERMINATION
 from .uci import EngineError, UciEngine, score_to_cp
 
@@ -93,7 +95,19 @@ class PlaySession:
         self.engine = UciEngine(spec["path"], cwd=spec.get("cwd"), options=spec.get("options"), name=spec["name"], args=spec.get("args"))
         self.engine.start()
         strength = strength or {}
-        if strength.get("elo"):
+        self.level = None                                       # a human-like level (arena/levels.py); None = full strength or the engine's own UCI_Elo
+        self.display_name = spec["name"]
+        self.rng = random.random
+        if strength.get("level") is not None:
+            lv = L.level_for_rating(int(strength["level"]))
+            if not lv["full"]:
+                self.level = lv
+                self.display_name = "%s - %s" % (spec["name"], lv["name"])
+                # the levels were measured with one thread and without a book: a book move or helper threads would make a level stronger than its name
+                self.engine.set_option("UCI_LimitStrength", False)
+                self.engine.set_option("Threads", 1)
+                self.engine.set_option("OwnBook", False)
+        elif strength.get("elo"):
             self.engine.set_option("UCI_LimitStrength", True)
             self.engine.set_option("UCI_Elo", int(strength["elo"]))
         if strength.get("skill") is not None:
@@ -111,8 +125,8 @@ class PlaySession:
             b = self.board
             return {"fen": b.fen(), "fens": list(self.fens), "turn": "w" if b.turn else "b", "uci": list(self.uci), "san": list(self.san), "last": self.uci[-1] if self.uci else None,
                     "check": chess.square_name(b.king(b.turn)) if b.is_check() else None, "over": self.result is not None, "result": self.result, "reason": self.reason,
-                    "human": "white" if self.human == chess.WHITE else "black", "thinking": self.thinking, "engine": self.spec["name"], "limits": self.limits,
-                    "start_fen": self.start_fen}
+                    "human": "white" if self.human == chess.WHITE else "black", "thinking": self.thinking, "engine": self.display_name, "limits": self.limits,
+                    "level": self.level["rating"] if self.level else None, "start_fen": self.start_fen}
 
     def _emit(self):
         s = self.state()
@@ -191,8 +205,8 @@ class PlaySession:
             h["Site"] = "local"
             h["Date"] = time.strftime("%Y.%m.%d")
             human_name = "You"
-            h["White"] = human_name if self.human == chess.WHITE else self.spec["name"]
-            h["Black"] = human_name if self.human == chess.BLACK else self.spec["name"]
+            h["White"] = human_name if self.human == chess.WHITE else self.display_name
+            h["Black"] = human_name if self.human == chess.BLACK else self.display_name
             h["Result"] = self.result or "*"
             if self.reason:
                 h["Termination"] = self.reason
@@ -232,8 +246,29 @@ class PlaySession:
             p = _info_payload(board_now, inf)
             p["type"] = "play_info"
             self.bus.publish(p)
-        self.engine.position(fen, moves)
-        res = self.engine.go(lim, timeout=timeout, on_info=on_info, abort=lambda: self.version != ver or self.closed)
+        def stop():
+            return self.version != ver or self.closed
+        if self.level:
+            # a human-like level: Kestrel looks as the level says and then chooses with the level's carelessness (arena/levels.py)
+            t0 = time.monotonic()
+            last = {}
+
+            def level_info(inf):
+                if inf.get("multipv", 1) == 1 and ("cp" in inf or "mate" in inf):
+                    last["inf"] = inf
+                on_info(inf)
+            uci_move, _ = L.choose_move(self.engine, fen, moves, board_now, self.level, len(moves), rng=self.rng, on_info=level_info, abort=stop, timeout=60.0)
+            if last.get("inf") and not stop():                    # a short search ends before the display throttle lets its last line through
+                p = _info_payload(board_now, last["inf"])
+                p["type"] = "play_info"
+                self.bus.publish(p)
+            wait = L.reply_pause(self.rng, time.monotonic() - t0)
+            if wait > 0:
+                L.sleep_checked(wait, stop)
+            res = {"bestmove": uci_move}
+        else:
+            self.engine.position(fen, moves)
+            res = self.engine.go(lim, timeout=timeout, on_info=on_info, abort=stop)
         with self.lock:
             self.thinking = False
             if self.version != ver or self.closed or self.result is not None:

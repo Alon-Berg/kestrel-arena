@@ -28,7 +28,7 @@
       $('#main').appendChild(h('div', { class: 'empty' }, h('b', {}, 'Cannot start'), e.message));
       return;
     }
-    Object.assign(A.state, { engines: boot.engines, ui: boot.ui || {}, cpu: boot.cpu, tournaments: boot.tournaments, current: boot.current, adjDefaults: boot.adj_defaults, projectDir: boot.project_dir, dataDir: boot.data_dir });
+    Object.assign(A.state, { engines: boot.engines, ui: boot.ui || {}, cpu: boot.cpu, tournaments: boot.tournaments, current: boot.current, adjDefaults: boot.adj_defaults, projectDir: boot.project_dir, dataDir: boot.data_dir, levels: boot.levels || { default: 1300, list: [] } });
     $('#ver').textContent = 'v' + boot.version;
     const tabs = $('#tabs'), main = $('#main');
     const ORDER = ['tournament', 'play', 'engines'];

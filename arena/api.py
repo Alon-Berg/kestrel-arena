@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import chess
 
-from . import paths
+from . import levels, paths
 from .engines import Registry, cpu_variant
 from .events import Bus
 from .game import DEFAULT_ADJ
@@ -149,7 +149,8 @@ def ep_bootstrap(st, req):
     cur = st.tournaments.current
     return {"app": "Kestrel Arena", "version": VERSION, "engines": st.registry.engines(), "ui": st.registry.settings.get("ui", {}),
             "cpu": {"logical": os.cpu_count() or 1, "variant": cpu_variant()}, "tournaments": st.tournaments.list(), "current": cur.snapshot() if cur else None,
-            "adj_defaults": DEFAULT_ADJ, "project_dir": st.registry.project_dir(), "data_dir": st.data_dir}
+            "adj_defaults": DEFAULT_ADJ, "project_dir": st.registry.project_dir(), "data_dir": st.data_dir,
+            "levels": {"default": levels.DEFAULT_RATING, "list": levels.public_list()}}
 
 
 def ep_engines_save(st, req):
@@ -309,7 +310,9 @@ def ep_play_new(st, req):
         except ValueError as e:
             raise ApiError("invalid FEN: %s" % e)
     strength = {}
-    if b.get("elo"):
+    if b.get("level") is not None and b.get("level") != "":
+        strength["level"] = _num(b.get("level"), levels.DEFAULT_RATING, 0, 4000, True)         # a rating of the human-like levels (0 = full strength); wins over elo
+    elif b.get("elo"):
         strength["elo"] = _num(b.get("elo"), 2000, 1, 4000, True)
     if b.get("skill") is not None and b.get("skill") != "":
         strength["skill"] = _num(b.get("skill"), 20, 0, 20, True)

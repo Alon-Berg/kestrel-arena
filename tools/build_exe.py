@@ -37,6 +37,21 @@ def main():
     if os.path.isdir(os.path.join(OUT, "data")):
         keep = os.path.join(tempfile.mkdtemp(prefix="arena_data_keep_"), "data")
         shutil.move(os.path.join(OUT, "data"), keep)
+    try:
+        build(ico)
+    finally:
+        # whatever happened, the data folder goes back (a failed build must never strand the saved tournaments in a temp folder)
+        if keep and os.path.isdir(keep):
+            os.makedirs(OUT, exist_ok=True)
+            if os.path.exists(os.path.join(OUT, "data")):
+                print("WARNING: %s already exists; your saved data is in %s" % (os.path.join(OUT, "data"), keep))
+            else:
+                shutil.move(keep, os.path.join(OUT, "data"))
+                print("kept your data folder (settings, saved tournaments)")
+    finish(t0)
+
+
+def build(ico):
     for d in ("build", "dist"):
         shutil.rmtree(os.path.join(ROOT, d), ignore_errors=True)
     sep = ";" if os.name == "nt" else ":"
@@ -50,16 +65,16 @@ def main():
     print(" ".join(cmd))
     r = subprocess.run(cmd)
     if r.returncode != 0 or not os.path.exists(os.path.join(OUT, "KestrelArena.exe")):
-        sys.exit("PyInstaller failed")
+        raise SystemExit("PyInstaller failed")
     # engines next to the exe (hard links when possible: no extra disk space)
     src = os.path.join(ROOT, "engines")
     for dp, dn, fn in os.walk(src):
         for f in fn:
             s = os.path.join(dp, f)
             link_or_copy(s, os.path.join(OUT, "engines", os.path.relpath(s, src)))
-    if keep:
-        shutil.move(keep, os.path.join(OUT, "data"))
-        print("kept your data folder (settings, saved tournaments)")
+
+
+def finish(t0):
     with open(os.path.join(OUT, "README.txt"), "w", encoding="utf-8") as f:
         text = open(os.path.join(ROOT, "README.md"), encoding="utf-8").read() if os.path.exists(os.path.join(ROOT, "README.md")) else "Kestrel Arena\n"
         f.write("\n".join(line for line in text.splitlines() if not line.lstrip().startswith("<")) + "\n")        # no HTML (the logo line) in the plain-text copy

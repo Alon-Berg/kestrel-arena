@@ -6,7 +6,8 @@ from .uci import UciEngine
 
 
 def engine_signature(spec):
-    return (spec["path"], spec.get("args") or "", spec.get("priority") or "", json.dumps(spec.get("options") or {}, sort_keys=True, default=str))
+    return (spec["path"], spec.get("args") or "", spec.get("priority") or "", json.dumps(spec.get("options") or {}, sort_keys=True, default=str), spec.get("overhead_ms"),
+            json.dumps(spec.get("quirks") or {}, sort_keys=True))
 
 
 class EnginePool:
@@ -23,7 +24,8 @@ class EnginePool:
                 if e.signature == sig and e.alive:
                     self._idle.pop(i)
                     return e
-        eng = UciEngine(spec["path"], cwd=spec.get("cwd"), options=spec.get("options"), name=spec.get("name"), args=spec.get("args"), priority=spec.get("priority"))
+        eng = UciEngine(spec["path"], cwd=spec.get("cwd"), options=spec.get("options"), name=spec.get("name"), args=spec.get("args"), priority=spec.get("priority"),
+                        overhead_ms=spec.get("overhead_ms"), quirks=spec.get("quirks"))
         eng.signature = sig
         with self._lock:
             self._all.add(eng)

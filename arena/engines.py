@@ -29,6 +29,32 @@ def slug(s):
     return re.sub(r"[^a-z0-9]+", "-", s.lower()).strip("-") or "engine"
 
 
+# Workarounds the Arena applies for engines of the roster that cannot play very fast games (0.5 s + 5 ms per game) on their own; keys of the roster entries (their 'id').  Used by tournaments and
+# tools/check_roster.py; an entry of settings.json with its own "quirks" (even an empty {}) replaces these.  What the keys do:
+#   warmup             one short search when the engine starts (True: depth 1; a number: that many ms), so its slow first search is not played on a game clock
+#   prepare_game       a depth-1 search of the start position of every game before the clocks run
+#   retry_bad_move     (the default for EVERY engine in very fast games: a clock of at most 3 s or at most 200 ms per move; {"retry_bad_move": false} in an entry switches it off)
+#                      an answer that is no move, or not a legal move (a search cut off before its first iteration was done) is asked for again, up to twice: 20 ms or more (100 ms or more for the
+#                      third try), twice (three times) the previous try if that is longer, at most 150 ms (300 ms) and never beyond the time forfeit margin; only the last try counts on the clock
+#   clock_to_movetime  in very fast games (clock of at most 3 s) the Arena sends 'go movetime <ms>' computed from the clock (a fortieth of it plus most of the increment) instead of the clock
+#   movetime_add       ms the engine subtracts from every movetime on its own (added to the computed time)
+#   movetime_min       the least movetime the engine copes with (ms)
+KNOWN_QUIRKS = {
+    "bagatur": {"warmup": 2000, "prepare_game": True},                                            # Java: slow while the JIT is cold, and about 1.2 s to rebuild everything whenever a game starts from another position
+    "serendipity": {"warmup": True, "clock_to_movetime": True, "movetime_min": 30, "retry_bad_move": True},      # pauses of 10-30 ms (more under load); cut off before depth 1 it answers with its previous move
+    "yukari": {"clock_to_movetime": True, "movetime_add": 19, "movetime_min": 30},                # takes 19 ms off every movetime, and crashes (Rust panic) when nothing is left
+    "quanticade": {"retry_bad_move": True},                                                       # its timer ticks every 15.6 ms: a movetime below that can end the search before depth 1
+    "smallbrain": {"clock_to_movetime": True, "retry_bad_move": True},                            # overshoots a nearly empty clock; now and then an illegal move in a tournament under load
+    "uralochka": {"retry_bad_move": True},                                                        # now and then the null move a1a1 when the clock is nearly empty (1 s + 0.01 s: 2 games in 24)
+}
+
+
+def quirks_of(e):
+    """The workarounds for an engine entry (see KNOWN_QUIRKS)."""
+    q = e.get("quirks")
+    return dict(q) if q is not None else dict(KNOWN_QUIRKS.get(e.get("id"), {}))
+
+
 class Registry:
     def __init__(self, data_dir, resource_dir, app_dir):
         self.data_dir, self.resource_dir, self.app_dir = data_dir, resource_dir, app_dir
@@ -115,8 +141,13 @@ class Registry:
                     elo = int(elo) if elo not in (None, "") else None
                 except (TypeError, ValueError):
                     elo = None
-                user.append({"id": eid, "name": name, "path": e.get("path", ""), "args": e.get("args") or "", "cwd": e.get("cwd") or None, "options": dict(e.get("options") or {}),
-                             "elo": elo, "enabled": bool(e.get("enabled", True)), "note": e.get("note", "")})
+                entry = {"id": eid, "name": name, "path": e.get("path", ""), "args": e.get("args") or "", "cwd": e.get("cwd") or None, "options": dict(e.get("options") or {}),
+                         "elo": elo, "enabled": bool(e.get("enabled", True)), "note": e.get("note", "")}
+                if e.get("keep_off"):
+                    entry["keep_off"] = True                       # (kept when the list is saved from the Engines tab)
+                if e.get("quirks") is not None:
+                    entry["quirks"] = dict(e["quirks"])
+                user.append(entry)
             self.settings["engines"] = user
         self.save()
         return self.engines()
@@ -166,33 +197,93 @@ class Registry:
             rows = rows + [{"name": "Kestrel 3.2", "id_name": "Kestrel 3.2", "rating": k, "ccrl": None}]
         return {"source": source, "engines": rows}
 
+    @staticmethod
+    def roster_file(proj):
+        """The roster of the tournament project: the newest config/verify_results_updated_*.json (the roster after the updates of the engines), else config/verify_results.json."""
+        cfg = os.path.join(proj, "config")
+        updated = sorted(f for f in os.listdir(cfg) if re.match(r"verify_results_updated_.*\.json$", f))
+        return os.path.join(cfg, updated[-1]) if updated else os.path.join(cfg, "verify_results.json")
+
+    @staticmethod
+    def parse_roster_options(lst):
+        """['option.OwnBook=false', 'option.Hash=64'] -> {'OwnBook': False, 'Hash': 64}"""
+        out = {}
+        for s in lst or []:
+            m = re.match(r"option\.(.+?)=(.*)$", str(s).strip())
+            if not m:
+                continue
+            k, v = m.group(1), m.group(2)
+            if v.lower() in ("true", "false"):
+                out[k] = v.lower() == "true"
+            else:
+                try:
+                    out[k] = int(v)
+                except ValueError:
+                    out[k] = v
+        return out
+
     def import_roster(self, folder=None):
-        """Adds the engines of <project>/config/verify_results.json (name -> dir/cmd) with their tournament ratings. Returns (added, skipped)."""
+        """Makes the engine list match the roster of the tournament project (the newest verify_results_updated_*.json, else verify_results.json): engines that are new are added with their
+        tournament ratings, engines whose file or version changed are updated (your own option settings stay), engines the roster no longer has are switched off (not deleted).
+        Engines you added yourself are never touched.  Returns {'added', 'updated', 'disabled', 'skipped', 'file'}."""
         proj = folder or self.project_dir()
         if not proj:
             raise ValueError("Could not find config/verify_results.json of the tournament project. Pick the project folder in the Engines tab.")
-        with open(os.path.join(proj, "config", "verify_results.json"), encoding="utf-8") as f:
+        rfile = self.roster_file(proj)
+        with open(rfile, encoding="utf-8") as f:
             ver = json.load(f)
         ratings = {r["name"]: r["rating"] for r in self.roster_ratings()["engines"] if r.get("name")}
-        have = {os.path.normcase(e.get("path", "")) for e in self.settings["engines"]}
-        names = {e["name"].lower() for e in self.engines()}
-        added = skipped = 0
+        added = updated = disabled = skipped = 0
         with self.lock:
+            engines = self.settings["engines"]
+            by_id = {e.get("id"): e for e in engines}
+            have = {(os.path.normcase(e.get("path", "")), e.get("args") or "") for e in engines}          # file AND arguments: two Java engines share java.exe
+            names = {e["name"].lower() for e in self.engines()}
+            seen = set()
             for key, v in ver.items():
+                eid = slug(key)
                 if not v.get("ok", True):
                     skipped += 1
                     continue
                 path = os.path.join(v.get("dir", ""), v.get("cmd", ""))
-                if os.path.normcase(path) in have or not os.path.exists(path):
+                if not os.path.exists(path):
                     skipped += 1
                     continue
+                seen.add(eid)
                 name = v.get("id_name") or key
+                args = v.get("args") or ""
+                opts = self.parse_roster_options(v.get("opts"))
+                cur = by_id.get(eid)
+                if cur is not None and str(cur.get("note", "")).startswith("roster"):
+                    keep_off = bool(cur.get("keep_off"))                        # switched off by hand and meant to stay off (e.g. an engine that cannot play very fast games)
+                    changed = (os.path.normcase(cur.get("path", "")) != os.path.normcase(path) or (cur.get("args") or "") != args or cur.get("cwd") != v.get("dir")
+                               or cur.get("name") != name or (not keep_off and (not cur.get("enabled", True) or cur.get("note") != "roster"))
+                               or any(k2 not in (cur.get("options") or {}) for k2 in opts))
+                    if changed:
+                        names.discard(str(cur.get("name", "")).lower())
+                        if name.lower() in names:
+                            name = "%s (%s)" % (name, key)
+                        names.add(name.lower())
+                        cur.update({"name": name, "path": path, "args": args, "cwd": v.get("dir"), "elo": ratings.get(key, cur.get("elo")),
+                                    "enabled": cur.get("enabled", True) if keep_off else True, "note": cur.get("note") if keep_off else "roster"})
+                        for k2, v2 in opts.items():
+                            cur.setdefault("options", {}).setdefault(k2, v2)
+                        updated += 1
+                    continue
+                if (os.path.normcase(path), args) in have or cur is not None:    # the same engine is in the list already (or the id is taken by an engine of yours)
+                    skipped += 1
+                    continue
                 if name.lower() in names:
                     name = "%s (%s)" % (name, key)
                 names.add(name.lower())
-                self.settings["engines"].append({"id": slug(key), "name": name, "path": path, "args": v.get("args") or "", "cwd": v.get("dir"), "options": {},
-                                                  "elo": ratings.get(key), "enabled": True, "note": "roster"})
+                engines.append({"id": eid, "name": name, "path": path, "args": args, "cwd": v.get("dir"), "options": opts, "elo": ratings.get(key), "enabled": True, "note": "roster"})
+                have.add((os.path.normcase(path), args))
                 added += 1
+            for e in engines:                                                   # engines of an older roster that the current one no longer has
+                if e.get("note") == "roster" and e.get("id") not in seen and e.get("enabled", True):
+                    e["enabled"] = False
+                    e["note"] = "roster (no longer in the roster)"
+                    disabled += 1
             self.settings["project_dir"] = proj
         self.save()
-        return added, skipped
+        return {"added": added, "updated": updated, "disabled": disabled, "skipped": skipped, "file": os.path.basename(rfile)}

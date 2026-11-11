@@ -74,8 +74,36 @@ def _assign_to_kill_job(proc):
         pass
 
 
+def _full_speed(handle=None):
+    """Windows only: switches off the automatic efficiency throttling (EcoQoS, 'power throttling') of a process - of an engine we started (its handle), or of this process.  Windows 11 puts processes that
+    a background program started on the efficiency cores at a fraction of the speed and with long scheduling delays; for an engine that has to answer within 10 ms that means a late search, an
+    answer without a move, or the previous move (seen with Serendipity and Quanticade: about 3 searches in 100 in a tournament running games in parallel).  Failures are ignored."""
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        from ctypes import wintypes
+
+        class THROTTLING(ctypes.Structure):
+            _fields_ = [("Version", wintypes.ULONG), ("ControlMask", wintypes.ULONG), ("StateMask", wintypes.ULONG)]
+
+        k32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        k32.GetCurrentProcess.restype = wintypes.HANDLE
+        k32.SetProcessInformation.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
+        h = wintypes.HANDLE(int(handle)) if handle is not None else k32.GetCurrentProcess()
+        state = THROTTLING(1, 1, 0)                         # version 1, control EXECUTION_SPEED, state 0 = never throttle
+        k32.SetProcessInformation(h, 4, ctypes.byref(state), ctypes.sizeof(state))     # 4 = ProcessPowerThrottling
+    except Exception:
+        pass
+
+
+def full_speed_self():
+    """The same for this process (the Arena itself runs the games' clocks and reads every engine's output)."""
+    _full_speed(None)
+
+
 # ------------------------------------------------------------------------------------------------------------ parsing
-_INT_KEYS = ("depth", "seldepth", "multipv", "nodes", "nps", "time", "hashfull", "tbhits", "currmovenumber")
+_INT_KEYS =("depth", "seldepth", "multipv", "nodes", "nps", "time", "hashfull", "tbhits", "currmovenumber")
 
 
 def parse_info(line):
@@ -164,6 +192,13 @@ def parse_option(line):
     return opt
 
 
+def fix_move(u):
+    """Some engines write the promotion piece in capitals (a7a8Q); UCI wants lower case and python-chess refuses the capital letter."""
+    if u and len(u) == 5 and u[4] in "QRBN" and u[0] in "abcdefgh" and u[2] in "abcdefgh":
+        return u[:4] + u[4].lower()
+    return u
+
+
 def score_to_cp(info):
     """info dict -> centipawns from the mover's point of view (mate scores become +-(30000 - |mate|)); None without a score."""
     if not info:
@@ -191,11 +226,17 @@ def split_args(args):
 
 
 ABOVE_NORMAL_PRIORITY_CLASS = 0x00008000
+# the engine's own safety margin per move (Move Overhead, MoveOverhead, Move_Overhead, TimeMargin, UciOverhead, BufferTime ...); many engines default to 50-250 ms, which is a large part of a very fast game
+OVERHEAD_RE = re.compile(r"overhead|time ?margin|buffer ?time", re.I)
 
 
 class UciEngine:
-    def __init__(self, path, cwd=None, options=None, name=None, args=None, priority=None):
+    def __init__(self, path, cwd=None, options=None, name=None, args=None, priority=None, overhead_ms=None, quirks=None):
         self.path = path
+        # workarounds for engines that cannot play very fast games (arena/engines.py: KNOWN_QUIRKS): 'warmup' (a first search before any game) is done here, 'prepare_game', 'retry_bad_move',
+        # 'clock_to_movetime', 'movetime_add' and 'movetime_min' by arena/game.py
+        self.quirks = dict(quirks or {})
+        self.overhead_ms = overhead_ms              # not None: set the engine's own time-margin option (spin options like 'Move Overhead') to this many ms, unless the options say otherwise
         self.priority = priority                    # "above": start the process with above-normal priority (Windows) so background programs cannot make its moves late
         self.args = args or ""
         self.cwd = cwd or os.path.dirname(os.path.abspath(path))
@@ -212,7 +253,7 @@ class UciEngine:
         self.signature = None                  # set by the pool (path + options)
 
     # -- process ---------------------------------------------------------------------------------------------------
-    def start(self, timeout=20.0):
+    def start(self, timeout=60.0):                 # (some engines need 10-40 s to load their network on a busy PC: a slow start is not a lost game)
         if not os.path.exists(self.path):
             raise EngineError("engine not found: %s" % self.path)
         try:
@@ -222,6 +263,7 @@ class UciEngine:
         except OSError as e:
             raise EngineError("cannot start %s: %s" % (self.name, e))
         _assign_to_kill_job(self.proc)
+        _full_speed(self.proc._handle)
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
         self.send("uci")
@@ -240,8 +282,32 @@ class UciEngine:
                 break
         for k, v in self.options.items():
             self.set_option(k, v)
-        self.isready()
+        if self.overhead_ms is not None:
+            given = {str(k).lower() for k in self.options}
+            for o in self.supported.values():
+                if o["type"] == "spin" and OVERHEAD_RE.search(o["name"]) and o["name"].lower() not in given:
+                    v = int(self.overhead_ms)
+                    if o.get("min") is not None:
+                        v = max(v, o["min"])
+                    if o.get("max") is not None:
+                        v = min(v, o["max"])
+                    self.send("setoption name %s value %d" % (o["name"], v))
+        self.isready(timeout=timeout)
+        if self.quirks.get("warmup"):
+            self._warmup(timeout)
         return self
+
+    def _warmup(self, timeout):
+        """One short search before any game: some engines need a second or more for their first search of the process (lazy allocation, JIT), which must not count on a game clock.
+        The workaround 'warmup' is True (a depth-1 search) or a number of ms (a search of that long, to let a Java engine's JIT compile its hot code)."""
+        w = self.quirks.get("warmup")
+        self.new_game()
+        self.position(None, [])
+        if w is True or w <= 1:
+            self.go({"depth": 1}, timeout=min(float(timeout), 30.0))
+        else:
+            self.go({"movetime": int(w)}, timeout=min(float(timeout), int(w) / 1000.0 + 30.0))
+        self.isready(timeout=timeout)
 
     def _read_loop(self):
         try:
@@ -351,7 +417,7 @@ class UciEngine:
                 el = (time.perf_counter() - t0) * 1000.0
                 if stopped and timed_out:
                     raise EngineTimeout("%s: search ran over the time limit" % self.name)
-                return {"bestmove": t[1] if len(t) > 1 else None, "ponder": t[3] if len(t) > 3 and t[2] == "ponder" else None, "elapsed_ms": el, "info": best_info}
+                return {"bestmove": fix_move(t[1]) if len(t) > 1 else None, "ponder": fix_move(t[3]) if len(t) > 3 and t[2] == "ponder" else None, "elapsed_ms": el, "info": best_info}
             if line.startswith("info"):
                 inf = parse_info(line)
                 if not inf:

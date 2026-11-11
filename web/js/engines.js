@@ -73,7 +73,7 @@
     try {
       const r = await A.post('/api/engines/import_roster', folder ? { folder } : {});
       A.state.engines = r.engines; A.emit('engines', {}); render();
-      A.toast('Imported ' + r.added + ' engines (' + r.skipped + ' skipped).', 'ok');
+      A.toast('Roster ' + r.file + ': ' + r.added + ' added, ' + r.updated + ' updated, ' + r.disabled + ' switched off (no longer in the roster), ' + r.skipped + ' skipped.', 'ok');
     } catch (e) {
       if (/Could not find/.test(e.message)) {
         const ok = await A.confirm('Tournament project not found', 'Pick the folder of your tournament project (the one that contains config\\verify_results.json).', 'Choose folder');

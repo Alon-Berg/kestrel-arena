@@ -9,7 +9,7 @@ from concurrent.futures import ThreadPoolExecutor
 import chess
 
 from . import levels, paths
-from .engines import Registry, cpu_variant
+from .engines import Registry, cpu_variant, quirks_of
 from .events import Bus
 from .game import DEFAULT_ADJ
 from .play import AnalysisSession, PlaySession, apply_move, legal_info
@@ -112,7 +112,8 @@ def build_tournament_cfg(st, p):
             raise ApiError("Unknown engine: %s" % eid)
         if not os.path.exists(e["path"]):
             raise ApiError("%s: the file %s does not exist." % (e["name"], e["path"]))
-        specs[eid] = {"id": eid, "name": e["name"], "path": e["path"], "args": e.get("args") or "", "cwd": e.get("cwd"), "options": e.get("options") or {}, "elo": e.get("elo")}
+        specs[eid] = {"id": eid, "name": e["name"], "path": e["path"], "args": e.get("args") or "", "cwd": e.get("cwd"), "options": e.get("options") or {}, "elo": e.get("elo"),
+                      "quirks": quirks_of(e)}
     fmt = p.get("format", "roundrobin")
     if fmt not in ("roundrobin", "gauntlet", "swiss", "knockout"):
         raise ApiError("Unknown format: %s" % fmt)
@@ -129,6 +130,7 @@ def build_tournament_cfg(st, p):
     op = p.get("openings") or {}
     cfg = {"name": (p.get("name") or "").strip() or "Tournament %s" % time.strftime("%d %b %H:%M"), "format": fmt, "engine_ids": ids, "engines": specs, "params": params,
            "tc": tc, "hash": _num(p.get("hash"), 64, 1, 65536, True), "threads": _num(p.get("threads"), 1, 1, 128, True), "margin_ms": _num(p.get("margin_ms"), 600, 0, 10000, True),
+           "overhead_ms": "auto" if p.get("overhead_ms") == "auto" else (None if p.get("overhead_ms") in (None, "") else _num(p.get("overhead_ms"), 5, 0, 1000, True)),
            "concurrency": _num(p.get("concurrency"), 2, 1, 64, True), "priority": "normal" if p.get("priority") == "normal" else "above",
            "openings": {"source": op.get("source", "builtin"), "path": op.get("path", ""), "order": op.get("order", "random"), "seed": _num(p.get("seed"), 1, 0, 10 ** 9, True)},
            "adj": adj, "seed": _num(p.get("seed"), 1, 0, 10 ** 9, True)}
@@ -175,7 +177,7 @@ def ep_engines_check(st, req):
         t0 = time.perf_counter()
         eng = UciEngine(e["path"], cwd=e.get("cwd"), options=e.get("options"), name=e["name"], args=e.get("args"))
         try:
-            eng.start(timeout=20)
+            eng.start(timeout=60)
             return {"id": eid, "name": e["name"], "ok": True, "id_name": eng.id_name, "ms": int((time.perf_counter() - t0) * 1000)}
         except EngineError as ex:
             return {"id": eid, "name": e["name"], "ok": False, "error": str(ex)}
@@ -188,10 +190,11 @@ def ep_engines_check(st, req):
 
 def ep_engines_import(st, req):
     try:
-        added, skipped = st.registry.import_roster(req.body.get("folder"))
+        res = st.registry.import_roster(req.body.get("folder"))
     except (ValueError, OSError) as e:
         raise ApiError(str(e))
-    return {"added": added, "skipped": skipped, "engines": st.registry.engines()}
+    res["engines"] = st.registry.engines()
+    return res
 
 
 def ep_settings_save(st, req):

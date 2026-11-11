@@ -16,6 +16,7 @@ if ROOT not in sys.path:
 
 from arena.api import AppState          # noqa: E402
 from arena.server import start_server   # noqa: E402
+from arena.uci import full_speed_self   # noqa: E402
 
 
 def say(*a):
@@ -42,6 +43,7 @@ def main():
         k32.SetPriorityClass(k32.GetCurrentProcess(), 0x00008000)          # ABOVE_NORMAL_PRIORITY_CLASS
     except Exception:
         pass
+    full_speed_self()                                      # ... and out of Windows' efficiency throttling (EcoQoS), see arena/uci.py
     st = AppState()
     start_server(st, args.port)
     url = "http://127.0.0.1:%d/" % st.port

@@ -67,6 +67,79 @@ def _fmt_pv(board, pv, n=8):
         return ""
 
 
+def is_very_fast(tc):
+    """A clock of at most 3 s, or at most 200 ms per move."""
+    tc = tc or {}
+    mode = tc.get("mode", "time")
+    return (mode == "time" and float(tc.get("base", 10)) <= 3.0) or (mode == "movetime" and int(tc.get("ms", 100)) <= 200)
+
+
+def shim_limits(limits, side, quirks=None):
+    """For an engine that cannot manage a very fast clock (it overshoots, answers with a stale or empty move when the clock is nearly empty ...): the Arena turns the clock into a time per
+    move, a fortieth of what is left plus most of the increment, never more than a third of what is left (at least 2 ms).  The clock itself is still kept by the Arena.
+    quirks: 'movetime_add' (ms: the engine subtracts that much from every movetime on its own) and 'movetime_min' (ms: it crashes or answers nothing below that)."""
+    q = quirks or {}
+    own = limits["wtime"] if side == chess.WHITE else limits["btime"]
+    inc = limits.get("winc" if side == chess.WHITE else "binc", 0) or 0
+    ms = max(2.0, min(own / 40.0 + 0.8 * inc, own / 3.0)) + float(q.get("movetime_add", 0))
+    return {"movetime": int(max(ms, float(q.get("movetime_min", 0))))}
+
+
+def _legal(board, u):
+    """The move of an engine's answer when it is legal in the position, else None."""
+    try:
+        mv = chess.Move.from_uci(u) if u else None
+    except ValueError:
+        return None
+    return mv if mv is not None and mv in board.legal_moves else None
+
+
+def _ask(eng, start_fen, uci, tc, clock, side, timeout, should_stop):
+    """Position + go for the side to move; an engine with the 'clock_to_movetime' workaround gets a time per move instead of the clock in very fast games."""
+    eng.position(start_fen, uci)
+    lim = _limits(tc, clock, side)
+    q = getattr(eng, "quirks", None) or {}
+    if q.get("clock_to_movetime") and "wtime" in lim and is_very_fast(tc):
+        lim = shim_limits(lim, side, q)
+    return eng.go(lim, timeout=timeout, abort=should_stop)
+
+
+RETRY_TRIES = 3                      # the first answer and at most two more tries
+RETRY_MIN_MS = (20, 100)             # the least time of the second and of the third try
+RETRY_MAX_MS = (150, 300)            # ... and the most
+
+
+def _retry(eng, start_fen, uci, tc, clock, side, timeout, should_stop, wall, last, attempt, margin):
+    """Another try after an unusable answer (no move, or a move that is not legal: a search that was cut off before its first iteration was done, because the engine was held up for a moment): a time
+    per move of at least 20 ms (100 ms for the third try) even when the clock is nearly empty - the engine cannot finish an iteration in less - twice (three times) the time of the previous try
+    if that is longer, at most 150 ms (300 ms), and never beyond what the game allows before the move would be a time forfeit.  wall: the time of all tries so far, last: of the previous one.
+    The result's 'elapsed_ms' is the time of this try alone: the failed tries do not count on the engine's clock (they were mostly lost to the machine, not spent on thinking); the hard limit of
+    the whole move (a hung engine) still applies."""
+    eng.position(start_fen, uci)
+    mode = tc.get("mode", "time")
+    k = min(attempt - 2, len(RETRY_MIN_MS) - 1)
+    if mode == "time":
+        room = clock[side] + margin - wall - 250.0
+        ms = int(min(max(RETRY_MIN_MS[k], min((k + 2) * last, RETRY_MAX_MS[k])), max(RETRY_MIN_MS[0], room)))
+        lim = {"movetime": ms}
+    elif mode == "movetime":
+        lim = {"movetime": max(RETRY_MIN_MS[k], int(tc.get("ms", 100)))}
+    else:
+        lim = _limits(tc, clock, side)
+    q = getattr(eng, "quirks", None) or {}
+    if "movetime" in lim:                                # the engine's own constant and minimum apply to this time as well
+        lim["movetime"] = int(max(lim["movetime"] + float(q.get("movetime_add", 0)), float(q.get("movetime_min", 0))))
+    return eng.go(lim, timeout=max(0.05, timeout - wall / 1000.0), abort=should_stop)
+
+
+def _prepare_game(eng, start_fen, timeout=30.0):
+    """For an engine with the 'prepare_game' workaround: a depth-1 search of the game's start position before the clocks run (some engines rebuild everything, 1 s or more, when the start
+    position of a game differs from the last one)."""
+    eng.position(start_fen, [])
+    eng.go({"depth": 1}, timeout=timeout)
+    eng.isready()
+
+
 def play_game(spec, white, black, on_update=None, should_stop=None):
     """spec: gid, round, white, black (names), start_fen (or None), opening_moves (uci), tc, adj, margin_ms.
     Returns the game record (dict). Result '*' with reason 'aborted' means the game was cancelled."""
@@ -92,6 +165,8 @@ def play_game(spec, white, black, on_update=None, should_stop=None):
     for color, e in ((chess.WHITE, white), (chess.BLACK, black)):
         try:
             e.new_game()
+            if (getattr(e, "quirks", None) or {}).get("prepare_game"):
+                _prepare_game(e, start_fen)
         except EngineError:
             result, reason = ("0-1" if color == chess.WHITE else "1-0"), "engine not responding"
             e.dead = True
@@ -101,6 +176,7 @@ def play_game(spec, white, black, on_update=None, should_stop=None):
         clock[chess.WHITE] = clock[chess.BLACK] = float(tc.get("base", 10)) * 1000.0
     inc_ms = float(tc.get("inc", 0)) * 1000.0 if tc.get("mode", "time") == "time" else 0.0
     own = {chess.WHITE: [], chess.BLACK: []}            # each side's own scores (own point of view), for adjudication
+    retries = 0                                         # moves an engine with the 'retry_bad_move' workaround had to be asked for twice
 
     while result is None:
         out = board.outcome(claim_draw=True)
@@ -142,8 +218,15 @@ def play_game(spec, white, black, on_update=None, should_stop=None):
             timeout = 120.0
         board_before = board.copy(stack=False)
         try:
-            eng.position(start_fen, uci)
-            res = eng.go(_limits(tc, clock, side), timeout=timeout, abort=should_stop)
+            res = _ask(eng, start_fen, uci, tc, clock, side, timeout, should_stop)
+            if (getattr(eng, "quirks", None) or {}).get("retry_bad_move", is_very_fast(tc)):          # (every engine in very fast games, unless its entry says false)
+                tries, wall, last = 1, res["elapsed_ms"], res["elapsed_ms"]
+                while _legal(board, res.get("bestmove")) is None and tries < RETRY_TRIES and not (should_stop and should_stop()):
+                    tries += 1                  # (the position has legal moves: the game would be over otherwise)
+                    retries += 1
+                    res = _retry(eng, start_fen, uci, tc, clock, side, timeout, should_stop, wall, last, tries, margin)
+                    last = res["elapsed_ms"]
+                    wall += last
         except EngineTimeout:
             result = "0-1" if side == chess.WHITE else "1-0"
             reason = "time forfeit" if mode == "time" else "no move in time"
@@ -168,12 +251,8 @@ def play_game(spec, white, black, on_update=None, should_stop=None):
                 break
             clock[side] = max(0.0, clock[side] - elapsed) + inc_ms
         u = res["bestmove"]
-        mv = None
-        try:
-            mv = chess.Move.from_uci(u) if u else None
-        except ValueError:
-            mv = None
-        if mv is None or mv not in board.legal_moves:
+        mv = _legal(board, u)
+        if mv is None:
             result = "0-1" if side == chess.WHITE else "1-0"
             reason = "illegal move" if u not in (None, "(none)", "0000") else "no move"
             break
@@ -197,6 +276,8 @@ def play_game(spec, white, black, on_update=None, should_stop=None):
     rec = {"white": spec["white"], "black": spec["black"], "round": spec.get("round"), "result": result, "reason": reason, "start_fen": start_fen,
            "uci": uci, "san": san, "cp": cps, "depth": depths, "ms": times, "nodes": nodes_l, "book": n_book, "plies": len(uci),
            "dur": round(time.time() - t_start, 1), "ended": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    if retries:
+        rec["retries"] = retries
     return rec
 
 

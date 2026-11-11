@@ -1,7 +1,8 @@
 """Builds the Windows app: dist/KestrelArena/KestrelArena.exe (PyInstaller, one folder) with the engines/ folder next to it.
 
-usage: python tools/build_exe.py            (about a minute)
-The dev data folder (settings, tournaments) is NOT copied: the packaged app starts with a clean data/ folder of its own.
+usage: python tools/build_exe.py [--dist DIR]            (a few minutes)
+  --dist DIR   build into DIR/KestrelArena instead of dist/KestrelArena, e.g. next to a copy of the app that is running right now
+The dev data folder (settings, tournaments) is NOT copied: the packaged app starts with a clean data/ folder of its own (an existing data/ folder of the target is kept).
 """
 import os
 import shutil
@@ -12,7 +13,16 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 os.chdir(ROOT)
-DIST = os.path.join(ROOT, "dist")
+
+
+def _dist_arg():
+    for i, a in enumerate(sys.argv):
+        if a == "--dist" and i + 1 < len(sys.argv):
+            return os.path.abspath(sys.argv[i + 1])
+    return os.path.join(ROOT, "dist")
+
+
+DIST = _dist_arg()
 OUT = os.path.join(DIST, "KestrelArena")
 
 
@@ -52,8 +62,8 @@ def main():
 
 
 def build(ico):
-    for d in ("build", "dist"):
-        shutil.rmtree(os.path.join(ROOT, d), ignore_errors=True)
+    shutil.rmtree(os.path.join(ROOT, "build"), ignore_errors=True)
+    shutil.rmtree(OUT, ignore_errors=True)                 # (only the app folder of the target: another copy that is running somewhere else is not touched)
     sep = ";" if os.name == "nt" else ":"
     cmd = [sys.executable, "-m", "PyInstaller", "--noconfirm", "--clean", "--onedir", "--windowed", "--name", "KestrelArena", "--icon", ico,
            "--add-data", os.path.join(ROOT, "web") + sep + "web",

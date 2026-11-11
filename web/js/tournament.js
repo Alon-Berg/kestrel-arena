@@ -7,7 +7,7 @@
   const DEFAULT_S = {
     name: '', format: 'roundrobin', games: 2, rounds: 1, hero: '', swiss_rounds: 5, ko_games: 2, seeding: 'rating',
     tcMode: 'time', base: 10, inc: 0.1, movetime: 100, nodes: 20000, depth: 10,
-    hash: 64, threads: 1, concurrency: 2, margin_ms: 600, priority: 'above', seed: 1, v: 2,
+    hash: 64, threads: 1, concurrency: 2, margin_ms: 600, overhead_ms: 'auto', priority: 'above', seed: 1, v: 2,
     openings: { source: 'builtin', path: '', order: 'random' },
     adj: { draw: false, draw_after_move: 40, draw_moves: 8, draw_cp: 10, resign: false, resign_moves: 4, resign_cp: 800, max_plies: 700 },
     selected: [],
@@ -121,6 +121,8 @@
         field('Threads per engine', num('threads', { min: 1, max: 128 })),
         field('Parallel games', num('concurrency', { min: 1, max: 64 }), h('span', { class: 'help', id: 'cc-help' })),
         field('Time margin', num('margin_ms', { min: 0, max: 10000, step: 50 }), h('span', { class: 'muted' }, 'ms before a flag falls')),
+        field('Engine time overhead', sel('overhead_ms', [['auto', 'Automatic (5 ms when games are very fast)'], ['', "Engines' own setting"], ['0', '0 ms'], ['1', '1 ms'], ['5', '5 ms'], ['10', '10 ms'], ['20', '20 ms']]),
+          h('span', { class: 'help' }, 'turns down the "Move Overhead" of the engines that have one (many keep 50 to 250 ms for themselves, which is too much for games of a second or two); automatic = clocks up to 3 s')),
         field('Process priority', sel('priority', [['above', 'Above normal (recommended)'], ['normal', 'Normal']]), h('span', { class: 'help' }, 'keeps background programs from making moves late')),
         h('div', { class: 'hr' }), openBox, h('div', { class: 'hr' }), adjBox));
     renderTc(); renderAdj(); renderOpen(); refreshDyn();
@@ -232,7 +234,7 @@
     try {
       const snap = await A.post('/api/tournament/create', {
         name: S.name, format: S.format, engines: use, games: S.games, rounds: S.rounds, hero: S.hero, swiss_rounds: S.swiss_rounds, ko_games: S.ko_games, seeding: S.seeding,
-        tc: currentTc(), hash: S.hash, threads: S.threads, concurrency: S.concurrency, margin_ms: S.margin_ms, priority: S.priority, openings: S.openings, adj: S.adj, seed: S.seed, start: true });
+        tc: currentTc(), hash: S.hash, threads: S.threads, concurrency: S.concurrency, margin_ms: S.margin_ms, overhead_ms: S.overhead_ms === 'auto' || S.overhead_ms === undefined ? 'auto' : (S.overhead_ms === '' ? null : +S.overhead_ms), priority: S.priority, openings: S.openings, adj: S.adj, seed: S.seed, start: true });
       loadSnapshot(snap);
       showRun();
       A.get('/api/tournaments').then((r) => { A.state.tournaments = r.tournaments; renderSaved(); });

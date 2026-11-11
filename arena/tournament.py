@@ -37,6 +37,29 @@ def normalize_tc(tc):
     raise ValueError("unknown time control mode: %s" % mode)
 
 
+AUTO_OVERHEAD_MS = 5          # 'auto': the most an engine keeps back per move in very fast games
+
+
+is_very_fast = gamemod.is_very_fast
+
+
+def auto_overhead(tc):
+    """'Automatic' engine time overhead for a time control, in ms (None = leave the engines alone): very fast games get a small one, a third of the increment at most 5 ms (an overhead as large as the
+    increment would eat the clock: with 0.5 s + 0.005 s and 5 ms several engines ran out of time that were fine with 1 ms); longer games keep the engines' own settings."""
+    mode = (tc or {}).get("mode", "time")
+    if mode == "time" and float(tc.get("base", 10)) <= 3.0:
+        return int(min(AUTO_OVERHEAD_MS, max(0.0, float(tc.get("inc", 0)) * 1000.0 / 3.0)))
+    if mode == "movetime" and int(tc.get("ms", 100)) <= 200:
+        return AUTO_OVERHEAD_MS
+    return None
+
+
+def effective_overhead(cfg):
+    """The 'Engine time overhead' of a tournament in ms, or None for the engines' own settings ('auto': see auto_overhead)."""
+    ov = cfg.get("overhead_ms")
+    return auto_overhead(cfg.get("tc")) if ov == "auto" else ov
+
+
 class Tournament:
     def __init__(self, cfg, directory, bus, data_dir, resource_dir=None):
         self.cfg = cfg
@@ -251,7 +274,8 @@ class Tournament:
         if self.cfg.get("threads"):
             opts["Threads"] = int(self.cfg["threads"])
         opts.update(s.get("options") or {})
-        return {"path": s["path"], "args": s.get("args") or "", "cwd": s.get("cwd"), "options": opts, "name": s["name"], "priority": self.cfg.get("priority", "above")}
+        return {"path": s["path"], "args": s.get("args") or "", "cwd": s.get("cwd"), "options": opts, "name": s["name"], "priority": self.cfg.get("priority", "above"),
+                "overhead_ms": effective_overhead(self.cfg), "quirks": s.get("quirks") or {}}
 
     def _run_task(self, task):
         opening = self.book.pick(task["batch"], task["pair"], task["g"] // 2, task["per_pair"])

@@ -30,15 +30,16 @@ def slug(s):
 
 
 # Workarounds the Arena applies for engines of the roster that cannot play very fast games (0.5 s + 5 ms per game) on their own; keys of the roster entries (their 'id').  Used by tournaments and
-# tools/check_roster.py; an entry of settings.json with its own "quirks" (even an empty {}) replaces these.  What the keys do:
+# tools/check_roster.py; an entry of settings.json with its own "quirks" (even an empty {}) replaces these.  An engine with a patched build (engines/patched/<id>.exe, tools/engine_patches:
+# Quanticade, Yukari, Smallbrain) has its bugs fixed in the engine and uses none of them.  What the keys do:
 #   warmup             one short search when the engine starts (True: depth 1; a number: that many ms), so its slow first search is not played on a game clock
 #   prepare_game       a depth-1 search of the start position of every game before the clocks run
 #   retry_bad_move     (the default for EVERY engine in very fast games: a clock of at most 3 s or at most 200 ms per move; {"retry_bad_move": false} in an entry switches it off)
 #                      an answer that is no move, or not a legal move (a search cut off before its first iteration was done) is asked for again, up to twice: 20 ms or more (100 ms or more for the
 #                      third try), twice (three times) the previous try if that is longer, at most 150 ms (300 ms) and never beyond the time forfeit margin; only the last try counts on the clock
 #   clock_to_movetime  in very fast games (clock of at most 3 s) the Arena sends 'go movetime <ms>' computed from the clock (a fortieth of it plus most of the increment) instead of the clock
-#   movetime_add       ms the engine subtracts from every movetime on its own (added to the computed time)
-#   movetime_min       the least movetime the engine copes with (ms)
+#   movetime_add       ms the engine subtracts from every movetime on its own (added to the computed time, and to a fixed time per move)
+#   movetime_min       the least movetime the engine copes with (ms; also applied to a fixed time per move)
 KNOWN_QUIRKS = {
     "bagatur": {"warmup": 2000, "prepare_game": True},                                            # Java: slow while the JIT is cold, and about 1.2 s to rebuild everything whenever a game starts from another position
     "serendipity": {"warmup": True, "clock_to_movetime": True, "movetime_min": 30, "retry_bad_move": True},      # pauses of 10-30 ms (more under load); cut off before depth 1 it answers with its previous move
@@ -46,12 +47,15 @@ KNOWN_QUIRKS = {
     "quanticade": {"retry_bad_move": True},                                                       # its timer ticks every 15.6 ms: a movetime below that can end the search before depth 1
     "smallbrain": {"clock_to_movetime": True, "retry_bad_move": True},                            # overshoots a nearly empty clock; now and then an illegal move in a tournament under load
     "uralochka": {"retry_bad_move": True},                                                        # now and then the null move a1a1 when the clock is nearly empty (1 s + 0.01 s: 2 games in 24)
+    "elixir": {"movetime_add": 95},                                                               # its source takes DEFAULT_MOVE_OVERHEAD (100 ms) off every 'go movetime' too: 'go movetime 100' = depth 1 (fine with a clock)
 }
 
 
-def quirks_of(e):
-    """The workarounds for an engine entry (see KNOWN_QUIRKS)."""
+def quirks_of(e, patched=False):
+    """The workarounds for an engine entry (see KNOWN_QUIRKS).  A patched build (Registry.patched_build) has its bugs fixed in the engine, so it needs none - unless the entry has its own."""
     q = e.get("quirks")
+    if q is None and patched:
+        return {}
     return dict(q) if q is not None else dict(KNOWN_QUIRKS.get(e.get("id"), {}))
 
 
@@ -117,6 +121,14 @@ class Registry:
                 return e
         return None
 
+    def patched_build(self, e):
+        """Path of the patched build of a roster engine, engines/patched/<id>.exe, or None (see tools/engine_patches: the engine's own time-handling bugs fixed, the search unchanged).
+        Not for the bundled Kestrel, and not for an entry with "patched": false in settings.json."""
+        if not e or e.get("builtin") or e.get("patched") is False or not e.get("id"):
+            return None
+        p = os.path.join(self.app_dir, "engines", "patched", str(e["id"]) + ".exe")
+        return p if os.path.isfile(p) else None
+
     def default_engine_id(self):
         e = self.engines()
         return e[0]["id"] if e else None
@@ -147,6 +159,8 @@ class Registry:
                     entry["keep_off"] = True                       # (kept when the list is saved from the Engines tab)
                 if e.get("quirks") is not None:
                     entry["quirks"] = dict(e["quirks"])
+                if e.get("patched") is False:
+                    entry["patched"] = False                       # (play the official exe even if engines/patched has a build of this engine)
                 user.append(entry)
             self.settings["engines"] = user
         self.save()

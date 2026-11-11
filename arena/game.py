@@ -101,6 +101,8 @@ def _ask(eng, start_fen, uci, tc, clock, side, timeout, should_stop):
     q = getattr(eng, "quirks", None) or {}
     if q.get("clock_to_movetime") and "wtime" in lim and is_very_fast(tc):
         lim = shim_limits(lim, side, q)
+    elif "movetime" in lim:                              # a fixed time per move: the engine's own constant (Elixir takes 100 ms off every movetime) and minimum apply as well
+        lim["movetime"] = int(max(lim["movetime"] + float(q.get("movetime_add", 0)), float(q.get("movetime_min", 0))))
     return eng.go(lim, timeout=timeout, abort=should_stop)
 
 

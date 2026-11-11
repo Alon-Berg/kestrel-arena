@@ -112,8 +112,9 @@ def build_tournament_cfg(st, p):
             raise ApiError("Unknown engine: %s" % eid)
         if not os.path.exists(e["path"]):
             raise ApiError("%s: the file %s does not exist." % (e["name"], e["path"]))
-        specs[eid] = {"id": eid, "name": e["name"], "path": e["path"], "args": e.get("args") or "", "cwd": e.get("cwd"), "options": e.get("options") or {}, "elo": e.get("elo"),
-                      "quirks": quirks_of(e)}
+        patched = st.registry.patched_build(e)            # a patched build of the engine (engines/patched/<id>.exe) is used where there is one
+        specs[eid] = {"id": eid, "name": e["name"] + (" (patched)" if patched else ""), "path": patched or e["path"], "args": "" if patched else (e.get("args") or ""),
+                      "cwd": None if patched else e.get("cwd"), "options": e.get("options") or {}, "elo": e.get("elo"), "quirks": quirks_of(e, patched=bool(patched))}
     fmt = p.get("format", "roundrobin")
     if fmt not in ("roundrobin", "gauntlet", "swiss", "knockout"):
         raise ApiError("Unknown format: %s" % fmt)

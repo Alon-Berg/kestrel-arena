@@ -3,10 +3,11 @@ kind of fault (time forfeit, illegal move, no move, crash, failed start).  Use i
 
 usage: python tools/check_roster.py [--tc 0.5+0.005] [--games 6] [--concurrency 5] [--margin 600] [--data DIR] [--engines id,id,...] [--out report.json]
                                     [--set id:Option=value ...] [--hash 64] [--threads 1] [--opponent kestrel-3.2] [--include-disabled] [--movetime MS]
-                                    [--overhead MS] [--quirks none|JSON] [--first-opening N] [--probe-only]
+                                    [--overhead MS] [--quirks none|JSON] [--official] [--first-opening N] [--probe-only]
   --overhead    set the 'Move Overhead' / 'TimeMargin' option of every engine that has one to this many ms (the tournament setting 'Engine time overhead')
   --quirks      the workarounds for engines that cannot play very fast games (arena/engines.py KNOWN_QUIRKS): default = as in a tournament; 'none' = no workarounds;
                 or a JSON object {"id": {"warmup": true, "retry_bad_move": true, "clock_to_movetime": true, ...}} replacing them for these engines
+  --official    play the official exes: the default is the same as in a tournament, where an engine with a patched build (engines/patched/<id>.exe, tools/engine_patches) uses it
   --data        the folder with settings.json (default: environment KESTREL_ARENA_DATA, else ./data); the file is only read
   --engines     only these ids (default: every enabled engine of the list)
   --set         temporary option for one engine, e.g. --set uralochka:TimeMargin=0
@@ -64,6 +65,7 @@ def main():
     ap.add_argument("--overhead", default=None, help="set the 'Move Overhead'-type option of every engine that has one to this many ms, or 'auto' (the tournament setting 'Engine time overhead')")
     ap.add_argument("--quirks", default="", help="workarounds for engines that cannot play very fast games: default = as in a tournament (arena/engines.py KNOWN_QUIRKS), 'none', or a JSON "
                                                  "object {\"id\": {\"warmup\": true, ...}} replacing them for these engines")
+    ap.add_argument("--official", action="store_true", help="use the official exe of every engine, not the patched build in engines/patched (the default, as in a tournament)")
     a = ap.parse_args()
 
     if a.movetime:
@@ -103,20 +105,25 @@ def main():
 
     mine = json.loads(a.quirks) if a.quirks.startswith("{") else {}
 
+    def build_of(e):                                       # the patched build of the engine (engines/patched/<id>.exe) unless --official
+        return None if a.official else reg.patched_build(e)
+
     def quirks_for(e):
         if a.quirks == "none":
             return {}
-        return dict(mine[e["id"]]) if e["id"] in mine else quirks_of(e)
+        return dict(mine[e["id"]]) if e["id"] in mine else quirks_of(e, patched=bool(build_of(e)))
 
     def start(e, options):
-        eng = UciEngine(e["path"], cwd=e.get("cwd"), options=options, name=e["name"], args=e.get("args"), priority="above", overhead_ms=a.overhead, quirks=quirks_for(e))
+        patched = build_of(e)
+        eng = UciEngine(patched or e["path"], cwd=None if patched else e.get("cwd"), options=options, name=e["name"], args="" if patched else e.get("args"), priority="above",
+                        overhead_ms=a.overhead, quirks=quirks_for(e))
         t0 = time.perf_counter()
         eng.start()                                        # the Arena's own start-up timeout (20 s)
         return eng, time.perf_counter() - t0
 
     def check(idx_e):
         idx, e = idx_e
-        out = {"id": e["id"], "name": e["name"], "start_s": None, "games": [], "error": None}
+        out = {"id": e["id"], "name": e["name"] + (" (patched)" if build_of(e) else ""), "start_s": None, "games": [], "error": None}
         try:
             eng, out["start_s"] = start(e, spec_options(e))
         except Exception as ex:                            # EngineError, timeout ...

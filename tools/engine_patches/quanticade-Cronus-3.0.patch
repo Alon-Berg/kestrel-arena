@@ -1,0 +1,74 @@
+diff --git a/Source/search.c b/Source/search.c
+index f2eedda..4bdd3d5 100644
+--- a/Source/search.c
++++ b/Source/search.c
+@@ -192,8 +192,9 @@ void scale_time(thread_t *thread, uint8_t best_move_stability,
+ 
+ uint8_t check_time(thread_t *thread) {
+   // if time is up break here
++  // (never during the first iteration: a search that is stopped before depth 1 is done has no move to play)
+   if (thread->index == 0 &&
+-      ((limits.timeset && ((thread->nodes % 1024) == 0) &&
++      ((limits.timeset && thread->depth > 1 && ((thread->nodes % 1024) == 0) &&
+         get_time_ms() > limits.hard_limit) ||
+        (limits.nodes_set && thread->nodes >= limits.node_limit_hard))) {
+     // tell engine to stop calculating
+@@ -1439,10 +1440,22 @@ void search_position(position_t *pos, thread_t *threads) {
+     pthread_join(pthreads[i], NULL);
+   }
+ 
+-  // print best move
++  // print best move; if the search was stopped before it had a move (a "stop" in the first microseconds), any
++  // legal move is better than "(none)"
++  uint16_t best_move = threads->pv.pv_table[0][0];
++  if (!best_move) {
++    moves root_moves[1];
++    generate_moves(pos, root_moves);
++    for (uint32_t i = 0; i < root_moves->count; i++) {
++      if (is_legal(pos, root_moves->entry[i].move)) {
++        best_move = root_moves->entry[i].move;
++        break;
++      }
++    }
++  }
+   printf("bestmove ");
+-  if (threads->pv.pv_table[0][0]) {
+-    print_move(threads->pv.pv_table[0][0]);
++  if (best_move) {
++    print_move(best_move);
+   } else {
+     printf("(none)");
+   }
+diff --git a/Source/utils.c b/Source/utils.c
+index 730f3cf..5e1ce28 100644
+--- a/Source/utils.c
++++ b/Source/utils.c
+@@ -5,7 +5,8 @@
+ #include <string.h>
+ #include <unistd.h>
+ 
+-#ifdef WIN64
++#ifdef _WIN32
++#define WIN32_LEAN_AND_MEAN
+ #include <windows.h>
+ #else
+ #include <sys/time.h>
+@@ -19,8 +20,16 @@ int clamp(int d, int min, int max) {
+ }
+ 
+ uint64_t get_time_ms(void) {
+-#ifdef WIN64
+-  return GetTickCount();
++#ifdef _WIN32
++  // GetTickCount and gettimeofday advance in steps of 15.6 ms on Windows, so a search with a budget of a few ms
++  // was cut off at the first tick, sometimes before depth 1 was done ("bestmove (none)"). The performance counter
++  // is accurate to a microsecond or better.
++  static LARGE_INTEGER freq;
++  LARGE_INTEGER now;
++  if (!freq.QuadPart)
++    QueryPerformanceFrequency(&freq);
++  QueryPerformanceCounter(&now);
++  return (uint64_t)(now.QuadPart * 1000 / freq.QuadPart);
+ #else
+   struct timeval time_value;
+   gettimeofday(&time_value, NULL);

@@ -1,0 +1,78 @@
+diff --git a/yukari/src/engine/tc.rs b/yukari/src/engine/tc.rs
+index 8cb78da..c1a0993 100644
+--- a/yukari/src/engine/tc.rs
++++ b/yukari/src/engine/tc.rs
+@@ -12,6 +12,9 @@ pub struct TimeControl {
+ }
+ 
+ impl TimeControl {
++    /// Seconds kept back for the GUI (at most a quarter of the time that is left)
++    const MARGIN: f32 = 0.02;
++
+     /// Construct a new instance with the base time on the clock
+     #[must_use]
+     pub const fn new(mode: TimeMode) -> Self {
+@@ -45,7 +48,10 @@ impl TimeControl {
+     pub fn search_time(&self) -> (f32, f32) {
+         match self.mode {
+             TimeMode::MoveTime(millisecs) => {
+-                let secs = (millisecs as f32 / 1000.0) - 0.02;
++                // 20 ms are kept back for the GUI, but never more than a quarter of a short time: below 20 ms
++                // this used to be negative (a panic in Duration::from_secs_f32)
++                let total = millisecs as f32 / 1000.0;
++                let secs = total - Self::MARGIN.min(total * 0.25);
+                 (secs, secs)
+             }
+             TimeMode::Incremental { base: _, increment } => {
+@@ -53,13 +59,15 @@ impl TimeControl {
+                 let expected_length =
+                     move_number.mul_add(-2330.0, 72830.0) / (move_number.mul_add(move_number, move_number * 10.0) + 2644.0);
+                 let expected_length = (59.3 + expected_length) / 2.0;
+-                let remaining = self.remaining - 0.02;
++                let remaining = self.remaining.max(0.0);
++                let remaining = remaining - Self::MARGIN.min(remaining * 0.25);
+                 let soft = remaining.min((remaining - increment) / expected_length + increment);
+                 let hard = remaining / 3.0;
+                 (soft, hard)
+             }
+             TimeMode::Classical { base: _, mps } => {
+-                let remaining = self.remaining - 0.02;
++                let remaining = self.remaining.max(0.0);
++                let remaining = remaining - Self::MARGIN.min(remaining * 0.25);
+                 let mps = mps as i32;
+                 let move_number = (self.move_number / 2) as i32;
+                 let mut movesleft = mps - move_number;
+diff --git a/yukari/src/main.rs b/yukari/src/main.rs
+index 4cd20d9..af0b4d1 100644
+--- a/yukari/src/main.rs
++++ b/yukari/src/main.rs
+@@ -128,8 +128,9 @@ impl Yukari {
+     pub fn search(&mut self, best_pv: &mut ArrayVec<[Move; 64]>, tt: &mut [TtEntry], protocol: Protocol) {
+         let start = Instant::now();
+         let (soft_limit, hard_limit) = self.tc.search_time();
+-        let mut soft_limit = start + Duration::from_secs_f32(soft_limit);
+-        let hard_limit = start + Duration::from_secs_f32(hard_limit);
++        // (never negative: Duration::from_secs_f32 panics on that, and the first iteration needs a moment)
++        let mut soft_limit = start + Duration::from_secs_f32(soft_limit.max(0.002));
++        let hard_limit = start + Duration::from_secs_f32(hard_limit.max(0.002));
+ 
+         // while I love xboard protocol for its ease of parsing, the way fixed-nodes searching is implemented is *bad*.
+         let (nodes, stop_after) = if let Some(nodes_per_second) = self.nodes_per_second {
+@@ -249,6 +250,17 @@ impl Yukari {
+             }
+             depth += 1;
+         }
++        // A search that was cut off before depth 1 was done leaves no move (the callers index pv[0] and panicked):
++        // play any legal move instead.
++        if best_pv.is_empty() {
++            let moves: [Move; 256] = [Move::default(); 256];
++            let mut moves = ArrayVec::from(moves);
++            moves.set_len(0);
++            self.board.generate(&mut moves);
++            if let Some(m) = moves.into_iter().next() {
++                best_pv.push(m);
++            }
++        }
+         println!("# Avg AB cutoff index: {:.3}", s.beta_cutoff_index());
+         println!("# Avg QS cutoff index: {:.3}", s.q_beta_cutoff_index());
+         println!("# NMP success: {:.3}%", s.nullmove_success());

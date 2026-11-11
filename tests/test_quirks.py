@@ -41,6 +41,7 @@ check(is_very_fast({"mode": "time", "base": 3, "inc": 0.03}) and not is_very_fas
 # ------------------------------------------------------------------------------------------------------------- the known engines
 check(quirks_of({"id": "yukari"}) == KNOWN_QUIRKS["yukari"] and quirks_of({"id": "kestrel-3.2"}) == {} and quirks_of({"id": "bagatur"}).get("prepare_game"), "known engines get their workarounds by id")
 check(quirks_of({"id": "yukari", "quirks": {}}) == {} and quirks_of({"id": "yukari", "quirks": {"warmup": True}}) == {"warmup": True}, "an entry's own 'quirks' replaces them (an empty one switches them off)")
+check(quirks_of({"id": "elixir"}) == {"movetime_add": 95}, "Elixir (takes 100 ms off every movetime) gets 95 ms more on a fixed time per move")
 a = {"path": "x.exe", "options": {}, "overhead_ms": 1}
 check(engine_signature(dict(a, quirks={"warmup": True})) != engine_signature(a), "the engine pool tells engines with other workarounds apart")
 
@@ -130,6 +131,25 @@ w, b = engine("normal", "slow_w", {"clock_to_movetime": True}), engine("normal",
 rec = game(w, b, {"mode": "time", "base": 10, "inc": 0.1})
 gw = [c for c in commands(w) if c.startswith("go")]
 check(rec["reason"] == "move limit" and gw and all(c.startswith("go wtime ") for c in gw), "a game of 10 s: the clock is sent as it is: %s" % gw[:1])
+w.quit(), b.quit()
+
+# a fixed time per move: the engine's own constant and minimum apply to it as well
+w, b = engine("normal", "mt_w", {"movetime_add": 95}), engine("normal", "mt_b")
+rec = game(w, b, {"mode": "movetime", "ms": 100})
+gw = [c for c in commands(w) if c.startswith("go")]
+gb = [c for c in commands(b) if c.startswith("go")]
+check(rec["reason"] == "move limit" and gw and all(c == "go movetime 195" for c in gw), "fixed 100 ms per move: an engine that loses 95 ms of it on its own gets 195: %s" % gw[:2])
+check(gb and all(c == "go movetime 100" for c in gb), "... the other engine gets the 100 ms: %s" % gb[:1])
+w.quit(), b.quit()
+w, b = engine("normal", "mtmin_w", {"movetime_min": 30}), engine("normal", "mtmin_b")
+rec = game(w, b, {"mode": "movetime", "ms": 20})
+gw = [c for c in commands(w) if c.startswith("go")]
+check(rec["reason"] == "move limit" and gw and all(c == "go movetime 30" for c in gw), "fixed 20 ms per move: an engine that needs 30 ms gets 30: %s" % gw[:2])
+w.quit(), b.quit()
+w, b = engine("normal", "twice_w", {"clock_to_movetime": True, "movetime_add": 100}), engine("normal", "twice_b")
+rec = game(w, b, fast)
+gw = [int(c.split()[2]) for c in commands(w) if c.startswith("go movetime")]
+check(gw and all(110 <= t <= 130 for t in gw), "very fast clock game: the engine's constant is added once (about 116 ms, not 216): %s" % gw[:4])
 w.quit(), b.quit()
 
 # retry after 'no move'

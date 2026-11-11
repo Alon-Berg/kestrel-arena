@@ -1,0 +1,21 @@
+diff --git a/src/core/time_manager/time_manager.cpp b/src/core/time_manager/time_manager.cpp
+index e026257..e3cd25b 100644
+--- a/src/core/time_manager/time_manager.cpp
++++ b/src/core/time_manager/time_manager.cpp
+@@ -18,7 +18,15 @@ namespace elixir::time_management {
+         if (time < 0)
+             time = 1000;
+ 
+-        time -= DEFAULT_MOVE_OVERHEAD;
++        if (is_movetime) {
++            // "go movetime X" asks for X ms of thinking. The clock margin (DEFAULT_MOVE_OVERHEAD,
++            // 100 ms) used to be taken off it as well, so "go movetime 100" got no time at all and
++            // the engine answered after the first 1024 nodes. Keep only a small safety margin.
++            time -= std::min<F64>(5.0, time * 0.05);
++            time = std::max<F64>(time, 1.0);
++        } else {
++            time -= DEFAULT_MOVE_OVERHEAD;
++        }
+ 
+         if (is_movetime) {
+             soft_limit = time;

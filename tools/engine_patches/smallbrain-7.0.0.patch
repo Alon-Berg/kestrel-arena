@@ -1,0 +1,51 @@
+diff --git a/src/search.cpp b/src/search.cpp
+index 47e51ce..4e2adc0 100644
+--- a/src/search.cpp
++++ b/src/search.cpp
+@@ -740,6 +740,9 @@ SearchResult Search::iterativeDeepening()
+     Move bestmove = NO_MOVE;
+     SearchResult sr;
+ 
++    // the move of the last search must not be played if this one is cut off in its first iteration
++    pvTable[0][0] = NO_MOVE;
++
+     Score result = -VALUE_INFINITE;
+     int depth = 1;
+ 
+@@ -820,6 +823,20 @@ SearchResult Search::iterativeDeepening()
+     if (depth == 1)
+         bestmove = pvTable[0][0];
+ 
++    /********************
++     * Cut off before the first iteration found a move: any legal move is better than "0000".
++     *******************/
++    if (bestmove == NO_MOVE)
++    {
++        Movelist rootmoves;
++        Movegen::legalmoves<Movetype::ALL>(board, rootmoves);
++        for (auto ext : rootmoves)
++        {
++            bestmove = ext.move;
++            break;
++        }
++    }
++
+     /********************
+      * Mainthread prints bestmove.
+      * Allowprint is disabled in data generation
+diff --git a/src/timemanager.cpp b/src/timemanager.cpp
+index 64576b0..1d78270 100644
+--- a/src/timemanager.cpp
++++ b/src/timemanager.cpp
+@@ -22,5 +22,10 @@ Time optimumTime(int64_t availableTime, int inc, int movestogo)
+     // dont use more than 50% of total time available
+     time.maximum = static_cast<int64_t>(std::min(2.0 * time.optimum, 0.5 * availableTime));
+ 
++    // 0 means "no limit" to the search: with less than about 50 ms on the clock both values rounded down to 0 and
++    // the engine searched until it was stopped from outside (a flag fell). At least 1 ms.
++    time.optimum = std::max(time.optimum, int64_t(1));
++    time.maximum = std::max(time.maximum, int64_t(1));
++
+     return time;
+ }
+\ No newline at end of file

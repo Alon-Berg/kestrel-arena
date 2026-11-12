@@ -6,7 +6,7 @@
   const G = {
     mode: 'game', st: null, view: null, flipped: false, sel: null, cache: new Map(),
     AH: { fens: [START], san: [], uci: [], checks: [null], ply: 0 },
-    cfg: { engine: '', color: 'white', strength: 'full', elo: 2000, level: 1300, limit: 'movetime', movetime: 1000, nodes: 100000, depth: 12, fen: '', mpv: 2, aengine: '' },
+    cfg: { engine: '', color: 'white', strength: 'full', elo: 2000, limit: 'movetime', movetime: 1000, nodes: 100000, depth: 12, fen: '', mpv: 2, aengine: '' },
     analysing: false, lines: [], info: null, evalCp: null, evalMate: null, busy: false,
   };
   const probes = {};
@@ -183,7 +183,7 @@
     const e = A.engineById(id);
     const r = e ? await A.post('/api/engines/probe', { path: e.path, cwd: e.cwd, args: e.args }).catch(() => null) : null;
     const opt = (n) => (r && r.options || []).find((o) => o.name === n);
-    // Kestrel gets the human-like levels (arena/levels.py): its UCI_Elo option cannot go below the strength of a 2048-node search (see the README)
+    // Kestrel plays at full strength only, as on its web page: its UCI_Elo option cannot go below the strength of a 2048-node search (see the README)
     probes[id] = { elo: opt('UCI_Elo'), skill: opt('Skill Level'), kestrel: !!(r && /^kestrel/i.test(r.id_name || '')) };
     return probes[id];
   }
@@ -191,8 +191,7 @@
   async function newGame() {
     const c = G.cfg;
     const body = { engine: c.engine, color: c.color, limit: c.limit, movetime: c.movetime, nodes: c.nodes, depth: c.depth, fen: c.fen.trim() };
-    if (c.strength === 'level') body.level = c.level;
-    else if (c.strength === 'elo') body.elo = c.elo;
+    if (c.strength === 'elo') body.elo = c.elo;
     try {
       G.st = await A.post('/api/play/new', body); G.view = null; G.sel = null; G.evalCp = G.evalMate = null; G.info = null;
       G.flipped = G.st.human === 'black';
@@ -298,24 +297,12 @@
       // play panel
       const engSel = (key, onchg) => h('select', { class: 'select', onchange: (e) => { G.cfg[key] = e.target.value; save(); if (onchg) onchg(); } }, A.state.engines.map((e) => h('option', { value: e.id, selected: G.cfg[key] === e.id }, e.name)));
       const strengthBox = h('div', { class: 'inline' });
-      const levelNote = h('div', { class: 'help', style: 'margin:-2px 0 4px 120px' });
       async function renderStrength() {
         A.clear(strengthBox);
-        levelNote.textContent = '';
         const p = await probeEngine(G.cfg.engine);
-        const levels = ((A.state.levels || {}).list || []).filter((l) => !l.full);
-        const canLevel = !!(p && p.kestrel && levels.length);
-        const canElo = !!(p && p.elo) && !canLevel;                // Kestrel: levels instead of its UCI_Elo
-        if (canLevel && G.cfg.strength === 'elo') { G.cfg.strength = 'level'; G.cfg.level = (levels.reduce((b, l) => (Math.abs(l.rating - G.cfg.elo) < Math.abs(b.rating - G.cfg.elo) ? l : b), levels[0])).rating; }     // a setting from before the levels existed
-        if (!canLevel && G.cfg.strength === 'level') G.cfg.strength = 'full';
-        if (!canElo && G.cfg.strength === 'elo') G.cfg.strength = 'full';
-        strengthBox.appendChild(h('select', { class: 'select', style: 'width:auto', onchange: (e) => { G.cfg.strength = e.target.value; save(); renderStrength().then(renderLimit); } }, [['full', 'Full strength']].concat(canLevel ? [['level', 'Level...']] : []).concat(canElo ? [['elo', 'Limit to Elo...']] : []).map(([v, l]) => h('option', { value: v, selected: G.cfg.strength === v }, l))));
-        if (G.cfg.strength === 'level' && canLevel) {
-          if (!levels.some((l) => l.rating === G.cfg.level)) G.cfg.level = (A.state.levels || {}).default || 1300;
-          const cur = () => levels.find((l) => l.rating === G.cfg.level) || levels[0];
-          levelNote.textContent = cur().blurb;
-          strengthBox.appendChild(h('select', { class: 'select', style: 'width:auto', onchange: (e) => { G.cfg.level = +e.target.value; levelNote.textContent = cur().blurb; save(); } }, levels.map((l) => h('option', { value: l.rating, selected: G.cfg.level === l.rating }, l.name))));
-        }
+        const canElo = !!(p && p.elo) && !p.kestrel;                // not for Kestrel: below about 2300 every UCI_Elo setting plays alike, so it plays at full strength only
+        if (G.cfg.strength === 'level' || (!canElo && G.cfg.strength === 'elo')) G.cfg.strength = 'full';      // 'level' = a setting saved while Kestrel still had levels
+        strengthBox.appendChild(h('select', { class: 'select', style: 'width:auto', onchange: (e) => { G.cfg.strength = e.target.value; save(); renderStrength().then(renderLimit); } }, [['full', 'Full strength']].concat(canElo ? [['elo', 'Limit to Elo...']] : []).map(([v, l]) => h('option', { value: v, selected: G.cfg.strength === v }, l))));
         if (G.cfg.strength === 'elo' && canElo) {
           const lo = p.elo.min || 1320, hi = p.elo.max || 3200;
           G.cfg.elo = Math.max(lo, Math.min(hi, G.cfg.elo));
@@ -326,16 +313,15 @@
       const limBox = h('div', { class: 'inline' });
       function renderLimit() {
         A.clear(limBox);
-        const byLevel = G.cfg.strength === 'level';               // a level sets how much Kestrel looks at itself
-        limBox.appendChild(h('select', { class: 'select', style: 'width:auto', disabled: byLevel, onchange: (e) => { G.cfg.limit = e.target.value; save(); renderLimit(); } }, [['movetime', 'Time per move'], ['nodes', 'Nodes per move'], ['depth', 'Depth']].map(([v, l]) => h('option', { value: v, selected: G.cfg.limit === v }, l))));
+        limBox.appendChild(h('select', { class: 'select', style: 'width:auto', onchange: (e) => { G.cfg.limit = e.target.value; save(); renderLimit(); } }, [['movetime', 'Time per move'], ['nodes', 'Nodes per move'], ['depth', 'Depth']].map(([v, l]) => h('option', { value: v, selected: G.cfg.limit === v }, l))));
         const k = G.cfg.limit;
-        limBox.appendChild(h('input', { class: 'input num', type: 'number', value: G.cfg[k], min: 1, disabled: byLevel, onchange: (e) => { G.cfg[k] = parseInt(e.target.value, 10) || G.cfg[k]; save(); } }));
-        limBox.appendChild(h('span', { class: 'muted' }, byLevel ? 'set by the level' : k === 'movetime' ? 'ms' : ''));
+        limBox.appendChild(h('input', { class: 'input num', type: 'number', value: G.cfg[k], min: 1, onchange: (e) => { G.cfg[k] = parseInt(e.target.value, 10) || G.cfg[k]; save(); } }));
+        limBox.appendChild(h('span', { class: 'muted' }, k === 'movetime' ? 'ms' : ''));
       }
       const colorBox = h('div', { class: 'seg' });
       function renderColor() { A.clear(colorBox); [['white', 'White'], ['black', 'Black'], ['random', 'Random']].forEach(([v, l]) => colorBox.appendChild(h('button', { class: G.cfg.color === v ? 'on' : '', onclick: () => { G.cfg.color = v; save(); renderColor(); } }, l))); }
       fenIn = h('input', { class: 'input', placeholder: 'Start from FEN (optional)', value: G.cfg.fen, onchange: (e) => { G.cfg.fen = e.target.value; save(); } });
-      panelPlay = h('div', {}, field('Opponent', engSel('engine', () => renderStrength().then(renderLimit))), field('Strength', strengthBox), levelNote, field('Thinking', limBox), field('You play', colorBox), field('Position', fenIn),
+      panelPlay = h('div', {}, field('Opponent', engSel('engine', () => renderStrength().then(renderLimit))), field('Strength', strengthBox), field('Thinking', limBox), field('You play', colorBox), field('Position', fenIn),
         h('div', { class: 'row', style: 'margin-top:10px' }, h('button', { class: 'btn primary', onclick: newGame }, 'New game'), h('button', { class: 'btn', onclick: undo }, 'Take back'), h('button', { class: 'btn danger', onclick: resign }, 'Resign'),
           h('a', { class: 'btn', href: A.url('/api/play/pgn'), download: '' }, 'PGN')));
       renderStrength().then(renderLimit); renderLimit(); renderColor();

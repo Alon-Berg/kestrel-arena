@@ -5,7 +5,7 @@
 
   // ======================================================================================================== state
   const DEFAULT_S = {
-    name: '', format: 'roundrobin', games: 2, rounds: 1, hero: '', swiss_rounds: 5, ko_games: 2, seeding: 'rating',
+    name: '', format: 'roundrobin', games: 2, rounds: 1, hero: '', swiss_rounds: 5, ko_games: 2, seeding: 'rating', losses: 2, showOff: false,
     tcMode: 'time', base: 10, inc: 0.1, movetime: 100, nodes: 20000, depth: 10,
     hash: 64, threads: 1, concurrency: 2, margin_ms: 600, overhead_ms: 'auto', priority: 'above', seed: 1, v: 2,
     openings: { source: 'builtin', path: '', order: 'random' },
@@ -13,9 +13,11 @@
     selected: [],
   };
   const S = JSON.parse(JSON.stringify(DEFAULT_S));
-  const T = { snap: null, games: [], active: new Map(), names: {}, sel: null, view: null, ply: 0, tab: 'standings', structure: null, filter: '', t0: 0, elapsed0: 0 };
+  const T = { snap: null, games: [], active: new Map(), names: {}, sel: null, view: null, ply: 0, tab: 'standings', structure: null, filter: '', t0: 0, elapsed0: 0, evSeq: 0 };
   let root, setupEl, runEl, inRun = false;
-  const FORMATS = { roundrobin: 'Round robin', gauntlet: 'Gauntlet', swiss: 'Swiss', knockout: 'Knockout' };
+  const FORMATS = { roundrobin: 'Round robin', gauntlet: 'Gauntlet', swiss: 'Swiss', knockout: 'Knockout', elimination: 'Elimination (N losses)' };
+  const fmtName = (format, losses) => (format === 'elimination' && losses ? 'Elimination (' + losses + (losses === 1 ? ' loss' : ' losses') + ')' : FORMATS[format] || format);
+  const isBracket = (format) => format === 'knockout' || format === 'elimination';          // formats with a bracket (the number of games is only known at the end: tie-breaks, the champion's losses)
 
   const saveS = A.throttle(() => A.setPref('t_setup', S), 800);
 
@@ -36,7 +38,9 @@
     if (S.format === 'roundrobin') return n * (n - 1) / 2 * S.games * S.rounds;
     if (S.format === 'gauntlet') return (n - 1) * S.games * S.rounds;
     if (S.format === 'swiss') return S.swiss_rounds * Math.floor(n / 2) * S.games;
-    return (n - 1) * (S.ko_games % 2 ? S.ko_games + 1 : S.ko_games);
+    const perMatch = S.ko_games % 2 ? S.ko_games + 1 : S.ko_games;
+    if (S.format === 'elimination') return Math.max(1, Math.min(10, Math.round(S.losses) || 1)) * (n - 1) * perMatch;          // at least: everybody but the champion loses that many matches
+    return (n - 1) * perMatch;
   }
   function gameSeconds(tc) {           // rough average wall time of one game
     if (tc.mode === 'time') return ((S.adj.draw || S.adj.resign) ? 0.55 : 0.7) * 2 * (tc.base + 40 * tc.inc);
@@ -107,7 +111,8 @@
         dynamic.appendChild(field('Rounds', num('rounds', { min: 1, max: 50 })));
       }
       if (S.format === 'swiss') { dynamic.appendChild(field('Rounds', num('swiss_rounds', { min: 1, max: 50 }))); dynamic.appendChild(field('Games per pairing', num('games', { min: 1, max: 100 }))); }
-      if (S.format === 'knockout') { dynamic.appendChild(field('Games per match', num('ko_games', { min: 2, max: 1000, step: 2 }), h('span', { class: 'help' }, 'ties are broken by extra pairs of games'))); dynamic.appendChild(field('Seeding', sel('seeding', [['rating', 'By Elo (best first)'], ['list', 'As listed'], ['random', 'Random']]))); }
+      if (S.format === 'elimination') dynamic.appendChild(field('Losses to be out', num('losses', { min: 1, max: 10 }), h('span', { class: 'help' }, '1 = knockout, 2 = double elimination (winners and losers bracket), 3 = triple, ...')));
+      if (isBracket(S.format)) { dynamic.appendChild(field('Games per match', num('ko_games', { min: 2, max: 1000, step: 2 }), h('span', { class: 'help' }, 'ties are broken by extra pairs of games'))); dynamic.appendChild(field('Seeding', sel('seeding', [['rating', 'By Elo (best first)'], ['list', 'As listed'], ['random', 'Random']]))); }
     }
     refreshDynamic = refreshDyn;
 
@@ -135,7 +140,7 @@
     const quick = (label, fn) => h('button', { class: 'btn sm', onclick: () => { fn(); saveS(); renderParticipants(); refreshSummary(); refreshDyn(); } }, label);
     const right = h('div', {},
       h('div', { class: 'card' },
-        h('div', { class: 'h' }, 'Participants', h('span', { class: 'spacer' }), searchIn, quick('All', () => (S.selected = A.state.engines.map((e) => e.id))), quick('None', () => (S.selected = [])),
+        h('div', { class: 'h' }, 'Participants', h('span', { class: 'spacer' }), chk(S, 'showOff', 'show switched-off engines', () => renderParticipants()), searchIn, quick('All', () => (S.selected = usable().map((e) => e.id))), quick('None', () => (S.selected = [])),
           quick('Kestrel + 7 nearest', () => nearKestrel(8)), quick('Top 8 by Elo', () => topN(8)), quick('Top 16', () => topN(16))),
         partBody,
         h('div', { class: 'hr' }), summaryEl,
@@ -147,14 +152,15 @@
   }
   let refreshDynamic = () => {};
 
+  const usable = () => A.state.engines.filter((e) => e.enabled !== false);            // engines that are switched off (Engines tab) are left out of the quick picks
   function topN(n) {
-    S.selected = A.state.engines.filter((e) => e.elo).sort((a, b) => b.elo - a.elo).slice(0, n).map((e) => e.id);
-    if (S.selected.length < 2) S.selected = A.state.engines.slice(0, n).map((e) => e.id);
+    S.selected = usable().filter((e) => e.elo).sort((a, b) => b.elo - a.elo).slice(0, n).map((e) => e.id);
+    if (S.selected.length < 2) S.selected = usable().slice(0, n).map((e) => e.id);
   }
   function nearKestrel(n) {                         // Kestrel plus the engines closest to it in Elo
-    const k = A.state.engines.find((e) => e.builtin && e.elo) || A.state.engines.find((e) => /kestrel/i.test(e.name) && e.elo);
+    const k = usable().find((e) => e.builtin && e.elo) || usable().find((e) => /kestrel/i.test(e.name) && e.elo);
     if (!k) { topN(n); return; }
-    const others = A.state.engines.filter((e) => e !== k && e.elo).sort((a, b) => Math.abs(a.elo - k.elo) - Math.abs(b.elo - k.elo)).slice(0, n - 1);
+    const others = usable().filter((e) => e !== k && e.elo).sort((a, b) => Math.abs(a.elo - k.elo) - Math.abs(b.elo - k.elo)).slice(0, n - 1);
     S.selected = [k.id].concat(others.map((e) => e.id));
   }
   const selectedEngines = () => S.selected.map((id) => A.engineById(id)).filter(Boolean);
@@ -163,7 +169,7 @@
     A.clear(partBody);
     const q = (searchIn.value || '').toLowerCase();
     const set = new Set(S.selected);
-    const list = A.state.engines.filter((e) => !q || e.name.toLowerCase().includes(q));
+    const list = A.state.engines.filter((e) => (!q || e.name.toLowerCase().includes(q)) && (S.showOff || e.enabled !== false || set.has(e.id)));
     if (!list.length) { partBody.appendChild(h('div', { class: 'empty' }, h('b', {}, 'No engines'), 'Add engines in the Engines tab.')); return; }
     if (A.state.engines.length < 2 && !q) {
       partBody.appendChild(h('div', { class: 'card', style: 'background:var(--panel2);margin-bottom:10px' }, h('b', {}, 'A tournament needs at least two engines.'),
@@ -172,7 +178,7 @@
     }
     const rows = list.map((e) => h('tr', { onclick: (ev) => { if (ev.target.tagName === 'INPUT') return; toggle(e.id); } },
       h('td', { style: 'width:28px' }, h('input', { type: 'checkbox', checked: set.has(e.id), onchange: () => toggle(e.id) })),
-      h('td', {}, e.name, e.builtin ? h('span', { class: 'badge acc', style: 'margin-left:8px' }, 'bundled') : null),
+      h('td', {}, e.name, e.builtin ? h('span', { class: 'badge acc', style: 'margin-left:8px' }, 'bundled') : null, e.enabled === false ? h('span', { class: 'badge', style: 'margin-inline-start:8px' }, 'off') : null),
       h('td', { class: 'right mono muted' }, e.elo || ''),
       h('td', { class: 'muted' }, e.exists === false ? h('span', { class: 'bad' }, 'missing') : '')));
     partBody.appendChild(h('table', { class: 'tbl click' }, h('tbody', {}, rows)));
@@ -192,7 +198,7 @@
     A.clear(summaryEl);
     summaryEl.style.cssText = 'display:flex;gap:28px;flex-wrap:wrap';
     summaryEl.appendChild(h('div', { class: 'stat' }, h('b', {}, n), h('span', {}, 'engines')));
-    summaryEl.appendChild(h('div', { class: 'stat' }, h('b', {}, games ? games.toLocaleString() : '-'), h('span', {}, 'games')));
+    summaryEl.appendChild(h('div', { class: 'stat' }, h('b', {}, games ? (isBracket(S.format) ? '~' : '') + games.toLocaleString() : '-'), h('span', {}, 'games')));
     summaryEl.appendChild(h('div', { class: 'stat' }, h('b', {}, games ? '~' + fmt.dur(secs) : '-'), h('span', {}, 'estimated time')));
     const over = S.concurrency * S.threads > (A.state.cpu.logical || 8);
     if (over) summaryEl.appendChild(h('div', { class: 'warn', style: 'align-self:center;max-width:300px' }, 'Parallel games x threads is more than the ' + A.state.cpu.logical + ' logical CPUs: time-based games will be unfair.'));
@@ -205,7 +211,7 @@
     const list = A.state.tournaments || [];
     if (!list.length) { savedBody.appendChild(h('div', { class: 'muted' }, 'Finished and stopped tournaments are kept here so you can look at them again or continue them.')); return; }
     savedBody.appendChild(h('div', { class: 'scroll h300' }, h('table', { class: 'tbl' }, h('tbody', {}, list.map((t) => h('tr', {},
-      h('td', {}, h('b', {}, t.name || t.id), h('div', { class: 'muted' }, (FORMATS[t.format] || t.format) + ' - ' + t.engines + ' engines - ' + tcLabel(t.tc))),
+      h('td', {}, h('b', {}, t.name || t.id), h('div', { class: 'muted' }, fmtName(t.format, t.losses) + ' - ' + t.engines + ' engines - ' + tcLabel(t.tc))),
       h('td', {}, h('span', { class: 'badge ' + (t.status === 'finished' ? 'good' : t.status === 'running' ? 'acc' : '') }, t.status), h('div', { class: 'muted' }, t.games + ' games')),
       h('td', { class: 'right nowrap' },
         h('button', { class: 'btn sm', onclick: () => openTournament(t.id) }, t.status === 'finished' ? 'Open' : 'Open / resume'), ' ',
@@ -233,7 +239,7 @@
     }
     try {
       const snap = await A.post('/api/tournament/create', {
-        name: S.name, format: S.format, engines: use, games: S.games, rounds: S.rounds, hero: S.hero, swiss_rounds: S.swiss_rounds, ko_games: S.ko_games, seeding: S.seeding,
+        name: S.name, format: S.format, engines: use, games: S.games, rounds: S.rounds, hero: S.hero, swiss_rounds: S.swiss_rounds, ko_games: S.ko_games, seeding: S.seeding, losses: S.losses,
         tc: currentTc(), hash: S.hash, threads: S.threads, concurrency: S.concurrency, margin_ms: S.margin_ms, overhead_ms: S.overhead_ms === 'auto' || S.overhead_ms === undefined ? 'auto' : (S.overhead_ms === '' ? null : +S.overhead_ms), priority: S.priority, openings: S.openings, adj: S.adj, seed: S.seed, start: true });
       loadSnapshot(snap);
       showRun();
@@ -252,7 +258,7 @@
     T.snap = snap; T.games = snap.games.slice(); T.names = {};
     for (const id of snap.cfg.engine_ids) T.names[id] = snap.cfg.engines[id].name;
     T.active = new Map(snap.active.map((g) => [g.gid, Object.assign(g, { _t: performance.now() })]));
-    T.structure = snap.structure; T.sel = null; T.view = null; T.tab = snap.format === 'knockout' ? 'bracket' : 'standings'; T.filter = '';
+    T.structure = snap.structure; T.sel = null; T.view = null; T.tab = isBracket(snap.format) ? 'bracket' : 'standings'; T.filter = '';
     T.elapsed0 = snap.elapsed; T.t0 = performance.now();
     buildRun();
     refreshAll();
@@ -260,7 +266,7 @@
 
   function buildRun() {
     const cfg = T.snap.cfg;
-    hdr.title = h('div', { class: 'grow' }, h('b', { style: 'font-size:17px' }, cfg.name), h('div', { class: 'muted', id: 'run-sub' }));
+    hdr.title = h('div', { class: 'grow' }, h('b', { style: 'font-size:17px' }, cfg.name), h('div', { class: 'muted', id: 'run-sub' }), h('div', { class: 'bad', id: 'run-err' }));
     hdr.status = h('span', { class: 'badge' });
     hdr.prog = h('div', { class: 'progress', style: 'width:100%' }, h('i'));
     hdr.progText = h('span', { class: 'mono' });
@@ -289,12 +295,12 @@
   function renderHeader() {
     const s = T.snap, cfg = s.cfg;
     const done = T.games.length, total = s.total;
-    A.$('#run-sub', runEl).textContent = (FORMATS[cfg.format] || cfg.format) + ' - ' + cfg.engine_ids.length + ' engines - ' + tcLabel(cfg.tc) + ' - ' + cfg.concurrency + ' parallel game' + (cfg.concurrency > 1 ? 's' : '') + ' - openings: ' + s.book;
+    A.$('#run-sub', runEl).textContent = fmtName(cfg.format, (cfg.params || {}).losses) + ' - ' + cfg.engine_ids.length + ' engines - ' + tcLabel(cfg.tc) + ' - ' + cfg.concurrency + ' parallel game' + (cfg.concurrency > 1 ? 's' : '') + ' - openings: ' + s.book;
     const st = s.status;
     hdr.status.textContent = { running: 'Running', paused: 'Paused', stopping: 'Stopping...', stopped: 'Stopped', finished: 'Finished', error: 'Error', ready: 'Ready' }[st] || st;
     hdr.status.className = 'badge ' + (st === 'running' ? 'good' : st === 'finished' ? 'acc' : st === 'error' ? 'bad' : st === 'paused' ? 'warn' : '');
     let shownTotal = total;
-    const approx = cfg.format === 'knockout' && st !== 'finished';          // tie-break games are added while a knockout runs
+    const approx = isBracket(cfg.format) && st !== 'finished';          // tie-break games are added while a knockout runs
     if (done > total && !approx) shownTotal = done;
     if (approx && done >= total) shownTotal = done + Math.max(1, T.active.size);
     const pct = shownTotal ? Math.min(approx ? 99 : 100, 100 * done / shownTotal) : 0;
@@ -312,11 +318,17 @@
     hdr.btns.appendChild(h('a', { class: 'btn sm', href: A.url('/api/tournament/' + s.id + '/pgn'), download: '' }, 'PGN'));
     b('Export CSV', '', exportCsv);
     b('Setup', '', () => showSetup());
-    if (s.error) hdr.btns.appendChild(h('span', { class: 'bad', title: s.error }, 'internal error (hover)'));
+    const err = A.$('#run-err', runEl);
+    if (err) {            // the message of the program (a missing engine file ...) or, for an internal error, the last line of its report
+      const lines = (s.error || '').trim().split('\n');
+      err.textContent = s.error ? (lines.length > 1 ? 'Internal error: ' : '') + lines[lines.length - 1].slice(0, 300) : '';
+      err.title = s.error || '';
+    }
   }
 
   async function act(a) {
-    try { const r = await A.post('/api/tournament/' + T.snap.id + '/' + a); T.snap.status = r.status; if (a === 'start') { T.t0 = performance.now(); } renderHeader(); }
+    const seq = T.evSeq;          // a tournament that stops at once (a missing engine file) or ends at once has sent its events before this answer arrives: the answer is older
+    try { const r = await A.post('/api/tournament/' + T.snap.id + '/' + a); if (T.evSeq === seq) T.snap.status = r.status; if (a === 'start') { T.t0 = performance.now(); } renderHeader(); }
     catch (e) { A.toast(e.message, 'err'); }
   }
 
@@ -332,7 +344,7 @@
   function renderTabs() {
     A.clear(tabBtns);
     const tabs = [['standings', 'Standings'], ['crosstable', 'Crosstable']];
-    if (T.snap.format === 'knockout') tabs.unshift(['bracket', 'Bracket']);
+    if (isBracket(T.snap.format)) tabs.unshift(['bracket', 'Bracket']);
     for (const [id, l] of tabs) tabBtns.appendChild(h('button', { class: T.tab === id ? 'on' : '', onclick: () => { T.tab = id; renderTabs(); renderStandings(); } }, l));
   }
 
@@ -341,10 +353,13 @@
     if (T.tab === 'bracket') return renderBracket();
     const res = currentStandings();
     if (T.tab === 'crosstable') return renderCross(res);
+    const el = elimInfo();
+    if (el) orderElimination(res, el);
     const anchored = T.snap.cfg.engine_ids.every((id) => T.snap.cfg.engines[id].elo);
     const rows = res.rows.map((r) => h('tr', {},
       h('td', { class: 'right muted' }, r.rank),
       h('td', { style: 'max-width:200px', class: 'ellipsis', title: r.name }, r.name),
+      el ? h('td', { class: 'right mono' }, el.st.loss[r.id] + ' / ' + el.losses) : null, el ? h('td', {}, elimStatus(el, r)) : null,
       h('td', { class: 'right mono' }, r.games ? Math.round(r.elo) : ''),
       h('td', { class: 'right mono muted' }, r.err ? '±' + Math.round(r.err) : ''),
       h('td', { class: 'right mono', style: 'font-weight:700' }, fmt.pts(r.pts)),
@@ -352,7 +367,7 @@
       h('td', { class: 'right mono' }, h('span', { class: 'good' }, r.w), h('span', { class: 'muted' }, ' / '), r.d, h('span', { class: 'muted' }, ' / '), h('span', { class: 'bad' }, r.l)),
       h('td', { class: 'right mono' }, r.score === null ? '' : fmt.pct(r.score, 1)),
       h('td', { class: 'right mono muted' }, fmt.pts(r.sb))));
-    standBody.appendChild(h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, h('th', { class: 'r' }, '#'), h('th', {}, 'Engine'), h('th', { class: 'r', title: anchored ? 'Rating fitted to the results, anchored to the engines\' Elo values' : 'Rating difference fitted to the results (average = 0)' }, anchored ? 'Elo' : 'Elo diff'), h('th', { class: 'r', title: '95% confidence' }, '±'), h('th', { class: 'r' }, 'Pts'), h('th', { class: 'r' }, 'Games'), h('th', { class: 'r' }, 'W / D / L'), h('th', { class: 'r' }, 'Score'), h('th', { class: 'r', title: 'Sonneborn-Berger tie-break' }, 'SB'))), h('tbody', {}, rows)));
+    standBody.appendChild(h('table', { class: 'tbl' }, h('thead', {}, h('tr', {}, h('th', { class: 'r' }, '#'), h('th', {}, 'Engine'), el ? h('th', { class: 'r', title: 'Matches lost / matches a player may lose' }, 'Losses') : null, el ? h('th', {}, 'Status') : null, h('th', { class: 'r', title: anchored ? 'Rating fitted to the results, anchored to the engines\' Elo values' : 'Rating difference fitted to the results (average = 0)' }, anchored ? 'Elo' : 'Elo diff'), h('th', { class: 'r', title: '95% confidence' }, '±'), h('th', { class: 'r' }, 'Pts'), h('th', { class: 'r' }, 'Games'), h('th', { class: 'r' }, 'W / D / L'), h('th', { class: 'r' }, 'Score'), h('th', { class: 'r', title: 'Sonneborn-Berger tie-break' }, 'SB'))), h('tbody', {}, rows)));
     if (!T.games.length) standBody.appendChild(h('div', { class: 'help', style: 'padding:8px' }, 'Results appear here as games finish.'));
   }
 
@@ -373,8 +388,54 @@
     standBody.appendChild(h('table', { class: 'tbl xt' }, h('thead', {}, head), h('tbody', {}, body)));
   }
 
+  // ---- elimination (N losses): loss counts, order and bracket ----------------------------------------------------------
+  function elimInfo() {            // null unless the tournament is an elimination whose structure has arrived
+    const st = T.structure;
+    if (!T.snap || T.snap.cfg.format !== 'elimination' || !st || st.kind !== 'elimination') return null;
+    const out = {};
+    st.out.forEach((o, i) => { out[o.id] = { round: o.round, order: i }; });
+    return { st, out, losses: st.losses };
+  }
+  const elimRank = (el, r) => (r.id === el.st.champion ? 0 : el.out[r.id] ? 2 : 1);
+  function orderElimination(res, el) {            // the champion, then the players still in (fewest losses first), then the others (the later a player went out, the better)
+    res.rows.sort((a, b) => elimRank(el, a) - elimRank(el, b) || (elimRank(el, a) === 1 ? el.st.loss[a.id] - el.st.loss[b.id] : elimRank(el, a) === 2 ? el.out[b.id].round - el.out[a.id].round : 0) || b.pts - a.pts || b.sb - a.sb);
+    res.rows.forEach((r, i) => { r.rank = i + 1; });
+  }
+  const elimStatus = (el, r) => (r.id === el.st.champion ? 'champion' : el.out[r.id] ? 'out in round ' + el.out[r.id].round : 'alive');
+  const lossTxt = (n) => n + (n === 1 ? ' loss' : ' losses');
+
+  function renderElimBracket(st) {
+    const nm = (id) => (id ? T.names[id] : 'bye');
+    const side = (m, who) => {            // one player of a match: the name (with his loss count when the two players differ in it) and the score
+      const id = who === 'a' ? m.a : m.b, sc = who === 'a' ? m.sa : m.sb, lv = who === 'a' ? m.la : m.lb;
+      return h('div', { class: m.winner && m.winner === id ? 'win' : '' },
+        h('span', { class: 'ellipsis', style: 'max-width:105px', title: nm(id) }, nm(id), id && !m.bye && m.la !== m.lb ? h('span', { class: 'lv' }, ' [' + lv + ']') : null), h('span', { class: 'mono' }, m.bye ? '' : fmt.pts(sc)));
+    };
+    const lines = [];
+    for (let k = 0; k < st.losses; k++) {            // who is in with how many losses, who is out
+      const ids = T.snap.cfg.engine_ids.filter((id) => st.loss[id] === k && !st.out.some((o) => o.id === id));
+      if (ids.length) lines.push(h('div', {}, h('b', {}, lossTxt(k) + ' (' + ids.length + '): '), ids.map((id) => T.names[id]).join(', ')));
+    }
+    if (st.out.length) lines.push(h('div', { class: 'muted' }, 'Out (' + st.out.length + '): ', st.out.map((o, i) => [i ? ', ' : '', h('span', { 'data-notr': '' }, T.names[o.id]), ' (round ' + o.round + ')'])));
+    const cols = st.rounds.map((r) => {
+      const groups = [];
+      for (const m of r.matches) {            // inside a round the matches are grouped by the number of losses of the players
+        const key = m.final ? 'final' : m.group === null ? 'between' : String(m.group);
+        let g = groups.find((x) => x.key === key);
+        if (!g) groups.push((g = { key, label: m.final ? 'Final' : m.group === null ? 'Final stage' : lossTxt(m.group), matches: [] }));
+        g.matches.push(m);
+      }
+      return h('div', { class: 'rnd' }, h('div', { class: 'muted center' }, 'Round ' + r.round),
+        groups.map((g) => h('div', { class: 'grp' }, h('div', { class: 'cap' }, g.label), g.matches.map((m) => h('div', { class: 'match' }, side(m, 'a'), side(m, 'b'))))));
+    });
+    if (st.champion) cols.push(h('div', { class: 'rnd' }, h('div', { class: 'muted center' }, 'Champion'), h('div', { class: 'match' }, h('div', { class: 'win' }, nm(st.champion), h('span', { class: 'mono' }, lossTxt(st.loss[st.champion]))))));
+    standBody.appendChild(h('div', { class: 'help', style: 'padding:2px 2px 8px' }, lines));
+    standBody.appendChild(h('div', { class: 'bracket elim' }, cols));
+  }
+
   function renderBracket() {
     const st = T.structure;
+    if (st && st.kind === 'elimination') return renderElimBracket(st);
     if (!st || !st.rounds) { standBody.appendChild(h('div', { class: 'empty' }, 'The bracket appears when the first games finish.')); return; }
     const nm = (id) => (id ? T.names[id] : 'bye');
     standBody.appendChild(h('div', { class: 'bracket' }, st.rounds.map((r) => h('div', { class: 'rnd' }, h('div', { class: 'muted center' }, 'Round ' + r.round),
@@ -386,8 +447,10 @@
 
   function exportCsv() {
     const res = currentStandings();
-    const lines = ['rank,engine,elo,error95,points,games,wins,draws,losses,score,sonneborn_berger'];
-    for (const r of res.rows) lines.push([r.rank, '"' + r.name.replace(/"/g, '""') + '"', r.games ? r.elo.toFixed(1) : '', r.err ? r.err.toFixed(1) : '', r.pts, r.games, r.w, r.d, r.l, r.score === null ? '' : r.score.toFixed(4), r.sb.toFixed(2)].join(','));
+    const el = elimInfo();
+    if (el) orderElimination(res, el);
+    const lines = ['rank,engine,elo,error95,points,games,wins,draws,losses,score,sonneborn_berger' + (el ? ',matches_lost,status' : '')];
+    for (const r of res.rows) lines.push([r.rank, '"' + r.name.replace(/"/g, '""') + '"', r.games ? r.elo.toFixed(1) : '', r.err ? r.err.toFixed(1) : '', r.pts, r.games, r.w, r.d, r.l, r.score === null ? '' : r.score.toFixed(4), r.sb.toFixed(2)].concat(el ? [el.st.loss[r.id], elimStatus(el, r)] : []).join(','));
     const url = URL.createObjectURL(new Blob([lines.join('\n')], { type: 'text/csv' }));
     const a = h('a', { href: url, download: (T.snap.cfg.name || 'standings').replace(/[^\w.-]+/g, '_') + '.csv' }); document.body.appendChild(a); a.click(); a.remove();
   }
@@ -591,6 +654,7 @@
   // ======================================================================================================== events
   A.on('tournament', (ev) => {
     if (!T.snap || ev.tid !== T.snap.id) return;
+    T.evSeq++;
     const prev = T.snap.status;
     T.snap.status = ev.status; T.snap.total = ev.total; T.snap.error = ev.error; T.structure = ev.structure;
     T.elapsed0 = ev.elapsed; T.t0 = performance.now();
@@ -625,6 +689,13 @@
     if (inRun) refreshStanding();
   });
   A.on('game_aborted', (ev) => { if (T.snap && ev.tid === T.snap.id) endActive(ev.gid); });
+  A.on('tournament_deleted', (ev) => {
+    if (T.snap && ev.tid === T.snap.id) {            // the one on show: forget it and go back to the setup
+      T.snap = null; T.games = []; T.active = new Map(); T.sel = null; T.view = null; T.structure = null;
+      if (inRun) showSetup(); else { const back = A.$('#back-btn'); if (back) back.classList.add('hidden'); }
+    }
+    A.get('/api/tournaments').then((r) => { A.state.tournaments = r.tournaments; renderSaved(); }).catch(() => {});
+  });
   document.addEventListener('keydown', (e) => {          // arrow keys step through a finished game
     if (!inRun || !T.sel || T.sel.live || !T.view || !root || root.classList.contains('hidden')) return;
     if (['INPUT', 'SELECT', 'TEXTAREA'].includes((document.activeElement || {}).tagName) || document.querySelector('.modal-back')) return;
@@ -632,6 +703,7 @@
     if (k === 'ArrowLeft') gotoPly(T.ply - 1); else if (k === 'ArrowRight') gotoPly(T.ply + 1); else if (k === 'Home') gotoPly(0); else if (k === 'End') gotoPly(1e9); else return;
     e.preventDefault();
   });
+  A.on('resync', () => A.emit('hello', {}));          // the server dropped events this window had not read: load the state again, as after a reconnect
   A.on('hello', async () => {          // (re)connected: resynchronise with the server
     if (!T.snap) return;
     try { const s = await A.get('/api/tournament/' + T.snap.id); const keep = inRun; loadSnapshot(s); if (keep) showRun(); } catch (e) { /* ignore */ }

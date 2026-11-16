@@ -356,8 +356,19 @@ class AnalysisSession:
                 self.engine.go({"infinite": True}, timeout=1e9, on_info=on_info, abort=lambda: self.job_version != ver or self.closed)
                 if lines:
                     self.bus.publish({"type": "analysis", "fen": fen, "lines": [lines[k] for k in sorted(lines)]})
-            except EngineError:
-                time.sleep(0.3)
+            except EngineError as e:                            # the engine crashed or hangs: say so (the page showed 'Thinking...' for ever), start a fresh one, wait for the next request
+                msg = str(e)
+                if not self.engine.alive:
+                    self.engine.kill()
+                    try:
+                        self.engine = UciEngine(self.spec["path"], cwd=self.spec.get("cwd"), options=self.spec.get("options"), name=self.spec["name"], args=self.spec.get("args"))
+                        self.engine.start()
+                    except EngineError as e2:
+                        msg += "; it could not be started again: %s" % e2
+                self.bus.publish({"type": "analysis", "fen": fen, "lines": [], "error": msg})
+                with self.cv:
+                    if self.job_version == ver:
+                        self.job = None
 
     def close(self):
         self.closed = True

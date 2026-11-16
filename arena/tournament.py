@@ -23,6 +23,10 @@ def _now_iso():
     return time.strftime("%Y-%m-%dT%H:%M:%S")
 
 
+class TournamentFailed(Exception):
+    """The tournament cannot go on for a reason the user can fix (an engine file is gone ...): the message is shown as it is, not as a traceback."""
+
+
 def normalize_tc(tc):
     tc = dict(tc or {})
     mode = tc.get("mode", "time")
@@ -75,6 +79,7 @@ class Tournament:
         self.next_gid = 1
         self.active = {}
         self.lock = threading.RLock()
+        self._save_lock = threading.Lock()
         self.stop_flag = threading.Event()
         self.pause_flag = threading.Event()
         self.pool = EnginePool(max_idle=max(4, 2 * int(cfg.get("concurrency", 2))))
@@ -119,10 +124,18 @@ class Tournament:
         d["status"] = self.status
         d["elapsed"] = self.elapsed()
         d["saved"] = _now_iso()
-        tmp = os.path.join(self.dir, "config.json.tmp")
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(d, f, indent=1)
-        os.replace(tmp, os.path.join(self.dir, "config.json"))
+        with self._save_lock:                               # (one writer at a time: the controller, the API threads)
+            tmp = os.path.join(self.dir, "config.json.tmp")
+            with open(tmp, "w", encoding="utf-8") as f:
+                json.dump(d, f, indent=1)
+            for attempt in range(40):
+                try:
+                    os.replace(tmp, os.path.join(self.dir, "config.json"))
+                    return
+                except PermissionError:                     # Windows refuses to replace a file that another thread has open right now (the list of saved tournaments reads it) or a scanner holds
+                    if attempt == 39:
+                        raise
+                    time.sleep(0.05)
 
     @staticmethod
     def _summary(rec):
@@ -145,6 +158,9 @@ class Tournament:
 
     # --------------------------------------------------------------------------------------------------------------- run
     def start(self):
+        old = self.controller
+        if old is not None and old.is_alive() and old is not threading.current_thread():
+            old.join(timeout=20)                            # a stopped run is still closing its engines: let it finish before the next one starts
         with self.lock:
             if self.status in ("running", "paused"):
                 return
@@ -169,6 +185,7 @@ class Tournament:
             if self.status == "running":
                 self.pause_flag.set()
                 self.status = "paused"
+                self.run_started_end()
         self._emit_state()
 
     def resume(self):
@@ -176,6 +193,7 @@ class Tournament:
             if self.status == "paused":
                 self.pause_flag.clear()
                 self.status = "running"
+                self.run_started = time.monotonic()
         self._emit_state()
 
     def stop(self):
@@ -201,21 +219,17 @@ class Tournament:
                 if batch is None:
                     break
                 tasks = self._expand(batch, batch_no)
-                tasks = [t for t in tasks if t["key"] not in self.done_keys]
-                if tasks:
-                    with self.cv:
-                        self.outstanding = len(tasks)
-                    for t in tasks:
-                        self.taskq.put(t)
-                    with self.cv:
-                        while self.outstanding > 0:
-                            self.cv.wait(timeout=0.5)
+                self._play_batch(tasks)
                 self._emit_state()
                 if self.stop_flag.is_set():
                     break
                 batch_no += 1
             with self.lock:
                 self.status = "stopped" if self.stop_flag.is_set() else "finished"
+        except TournamentFailed as e:
+            self.error = str(e)
+            with self.lock:
+                self.status = "error"
         except Exception:
             self.error = traceback.format_exc()
             with self.lock:
@@ -224,9 +238,34 @@ class Tournament:
             for _ in self.workers:
                 self.taskq.put(None)
             self.run_started_end()
-            self.save_config()                                   # status first (a reload right now must see 'finished' / 'stopped'), then shut the engines down
+            try:
+                self.save_config()                               # status first (a reload right now must see 'finished' / 'stopped'), then shut the engines down
+            except OSError:
+                pass                                             # (the engines must be shut down and the page told in any case; a reload would show 'stopped')
             self._emit_state()
             self.pool.close_all()
+
+    def _play_batch(self, tasks):
+        """Plays the games of a batch that are not on disk yet and waits for them. A game that was dropped because of an internal error (not because of a stop) is tried again, twice at most; after that
+        the tournament stops with an error: the schedule of the next batch is made from the results of this one, so a missing game must not be skipped."""
+        for attempt in range(3):
+            todo = [t for t in tasks if t["key"] not in self.done_keys]
+            if not todo or self.stop_flag.is_set():
+                return
+            with self.cv:
+                self.outstanding = len(todo)
+            for t in todo:
+                self.taskq.put(t)
+            with self.cv:
+                while self.outstanding > 0:
+                    self.cv.wait(timeout=0.5)
+            if all(t["key"] in self.done_keys for t in tasks):
+                self.error = None                                     # (an error of an earlier try that the next one has made good)
+                return
+        if not self.stop_flag.is_set():
+            last = (self.error or "").strip().splitlines()[-1] if self.error else ""
+            raise TournamentFailed("%d game(s) could not be played because of an internal error, so the tournament stopped (Continue tries them again): %s"
+                                   % (sum(1 for t in tasks if t["key"] not in self.done_keys), last))
 
     def run_started_end(self):
         if self.run_started:
@@ -277,7 +316,18 @@ class Tournament:
         return {"path": s["path"], "args": s.get("args") or "", "cwd": s.get("cwd"), "options": opts, "name": s["name"], "priority": self.cfg.get("priority", "above"),
                 "overhead_ms": effective_overhead(self.cfg), "quirks": s.get("quirks") or {}}
 
+    def _fail(self, msg):
+        """Stops the tournament with a message the user can act on (shown in the header; Continue clears it)."""
+        with self.lock:
+            self.error = msg
+        self.stop()
+
     def _run_task(self, task):
+        for eid in (task["white"], task["black"]):                  # an engine whose file is gone since the tournament was made (moved, deleted) must not lose its games one after the other
+            e = self.cfg["engines"][eid]
+            if not os.path.exists(e["path"]):
+                self._fail("The file of %s is missing: %s - put it back and press Continue." % (e["name"], e["path"]))
+                return
         opening = self.book.pick(task["batch"], task["pair"], task["g"] // 2, task["per_pair"])
         board = chess.Board(opening["fen"]) if opening.get("fen") else chess.Board()
         for u in opening.get("moves") or []:
@@ -481,7 +531,7 @@ class TournamentManager:
             elif status in ("running", "paused", "stopping"):
                 status = "stopped"
             out.append({"id": tid, "name": c.get("name"), "format": c.get("format"), "status": status, "games": n, "engines": len(c.get("engine_ids", [])),
-                        "created": c.get("created"), "tc": c.get("tc")})
+                        "created": c.get("created"), "tc": c.get("tc"), "losses": (c.get("params") or {}).get("losses") if c.get("format") == "elimination" else None})
         return out
 
     def delete(self, tid):
@@ -495,6 +545,7 @@ class TournamentManager:
             d = self._dir(tid)
             if os.path.isdir(d) and os.path.exists(os.path.join(d, "config.json")):
                 shutil.rmtree(d, ignore_errors=True)
+        self.bus.publish({"type": "tournament_deleted", "tid": tid})
 
     def shutdown(self):
         if self.current:

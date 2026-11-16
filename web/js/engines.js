@@ -87,7 +87,9 @@
     const nameIn = h('input', { class: 'input', value: e.name, disabled: e.builtin, onchange: (ev) => { e.name = ev.target.value; persist(); } });
     const eloIn = h('input', { class: 'input num', type: 'number', value: e.elo === null || e.elo === undefined ? '' : e.elo, placeholder: 'Elo', onchange: (ev) => { e.elo = ev.target.value === '' ? null : parseInt(ev.target.value, 10); persist(); } });
     const nopt = Object.keys(e.options || {}).length;
-    return h('tr', {},
+    return h('tr', { class: e.enabled === false ? 'off' : '' },
+      h('td', { class: 'c', title: 'Engines that are switched off stay in the list but are left out of the quick picks and the participant list of a new tournament' },
+        h('input', { type: 'checkbox', checked: e.enabled !== false, onchange: (ev) => { e.enabled = ev.target.checked; persist(); render(); } })),
       h('td', { style: 'min-width:230px' }, h('div', { class: 'row', style: 'gap:6px;flex-wrap:nowrap' }, nameIn, e.builtin ? h('span', { class: 'badge acc' }, 'bundled') : null)),
       h('td', {}, eloIn),
       h('td', { class: 'mono muted ellipsis', style: 'max-width:300px', title: e.path }, e.path),
@@ -102,7 +104,8 @@
   function render() {
     A.clear(tbody);
     A.state.engines.forEach((e) => tbody.appendChild(row(e)));
-    countEl.textContent = A.state.engines.length + ' engines';
+    const off = A.state.engines.filter((e) => e.enabled === false).length;
+    countEl.textContent = A.state.engines.length + ' engines' + (off ? ', ' + off + ' switched off' : '');
   }
 
   A.register({
@@ -117,7 +120,7 @@
             h('button', { class: 'btn sm', onclick: addEngine }, '+ Add engine...'),
             h('button', { class: 'btn sm', onclick: () => importRoster() }, 'Import tournament roster')),
           h('div', { class: 'scroll', style: 'max-height:calc(100vh - 230px)' }, h('table', { class: 'tbl' },
-            h('thead', {}, h('tr', {}, h('th', {}, 'Name'), h('th', {}, 'Elo'), h('th', {}, 'File'), h('th', {}, 'Arguments'), h('th', {}, 'UCI options'), h('th', {}, 'Status'), h('th', {}, ''))), tbody)),
+            h('thead', {}, h('tr', {}, h('th', { class: 'c', title: 'Switch an engine on or off' }, 'On'), h('th', {}, 'Name'), h('th', {}, 'Elo'), h('th', {}, 'File'), h('th', {}, 'Arguments'), h('th', {}, 'UCI options'), h('th', {}, 'Status'), h('th', {}, ''))), tbody)),
           h('div', { class: 'help', style: 'margin-top:10px' }, 'Elo is optional: it seeds Swiss and knockout tournaments and anchors the rating column of the standings. Kestrel is bundled with the app (the build that fits your CPU is chosen automatically).'))));
       render();
       A.on('engines', () => { if (!selfUpdate) render(); });

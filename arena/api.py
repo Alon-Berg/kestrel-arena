@@ -11,12 +11,13 @@ import chess
 from . import levels, paths
 from .engines import Registry, cpu_variant, quirks_of
 from .events import Bus
+from .formats import FORMATS, MAX_LOSSES
 from .game import DEFAULT_ADJ
 from .play import AnalysisSession, PlaySession, apply_move, legal_info
 from .tournament import TournamentManager, normalize_tc
 from .uci import EngineError, UciEngine, probe_engine
 
-VERSION = "1.0"
+VERSION = "1.1"
 
 
 class ApiError(Exception):
@@ -116,7 +117,7 @@ def build_tournament_cfg(st, p):
         specs[eid] = {"id": eid, "name": e["name"] + (" (patched)" if patched else ""), "path": patched or e["path"], "args": "" if patched else (e.get("args") or ""),
                       "cwd": None if patched else e.get("cwd"), "options": e.get("options") or {}, "elo": e.get("elo"), "quirks": quirks_of(e, patched=bool(patched))}
     fmt = p.get("format", "roundrobin")
-    if fmt not in ("roundrobin", "gauntlet", "swiss", "knockout"):
+    if fmt not in FORMATS:
         raise ApiError("Unknown format: %s" % fmt)
     try:
         tc = normalize_tc(p.get("tc"))
@@ -127,7 +128,8 @@ def build_tournament_cfg(st, p):
     games = _num(p.get("games"), 2, 1, 1000, True)
     params = {"rounds": _num(p.get("rounds"), 1, 1, 100, True), "games": games, "hero": p.get("hero") or ids[0],
               "swiss_rounds": _num(p.get("swiss_rounds"), 5, 1, 50, True), "ko_games": _num(p.get("ko_games"), 2, 2, 1000, True),
-              "seeding": p.get("seeding") if p.get("seeding") in ("rating", "random", "list") else "rating"}
+              "seeding": p.get("seeding") if p.get("seeding") in ("rating", "random", "list") else "rating",
+              "losses": _num(p.get("losses"), 2, 1, MAX_LOSSES, True)}
     op = p.get("openings") or {}
     cfg = {"name": (p.get("name") or "").strip() or "Tournament %s" % time.strftime("%d %b %H:%M"), "format": fmt, "engine_ids": ids, "engines": specs, "params": params,
            "tc": tc, "hash": _num(p.get("hash"), 64, 1, 65536, True), "threads": _num(p.get("threads"), 1, 1, 128, True), "margin_ms": _num(p.get("margin_ms"), 600, 0, 10000, True),

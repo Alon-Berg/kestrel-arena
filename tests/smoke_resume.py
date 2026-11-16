@@ -1,4 +1,4 @@
-"""Real-engine test of stop / resume (a new process would load the same files) and of Swiss and knockout through the tournament manager.
+"""Real-engine test of stop / resume (a new process would load the same files) and of Swiss, knockout and N-loss elimination through the tournament manager.
 usage: python tests/smoke_resume.py"""
 import os
 import sys
@@ -79,6 +79,39 @@ wait(t4)
 snap = t4.snapshot()
 check(t4.status == "finished" and snap["structure"].get("champion") in ids, "knockout: %s, %d games, champion %s" % (t4.status, len(t4.games), snap["structure"].get("champion")))
 
+# 3b. elimination with 2 losses and 5 engines: stopped after a few games, loaded again like after a restart of the app, resumed to the end
+cfg = build_tournament_cfg(st, dict(common, name="elimination test", format="elimination", engines=ids, ko_games=2, losses=2, seeding="rating", tc={"mode": "depth", "d": 1}))      # (the five engines play alike: ties are broken by many extra games, so a depth-1 search)
+check(cfg["params"]["losses"] == 2 and cfg["format"] == "elimination", "elimination: the setup is stored (2 losses)")
+st6 = AppState()
+st6.tournaments.root = tdir
+st6.registry.settings["engines"] = st.registry.settings["engines"]
+t6 = st6.tournaments.create(cfg)
+t6.start()
+t0 = time.time()
+while len(t6.games) < 5 and time.time() - t0 < 120:
+    time.sleep(0.1)
+t6.stop()
+wait(t6)
+n_stop = len(t6.games)
+check(t6.status == "stopped" and 5 <= n_stop < 30, "elimination stopped after %d games (status %s)" % (n_stop, t6.status))
+st7 = AppState()
+st7.tournaments.root = tdir
+t7 = st7.tournaments.load(t6.id)
+check(len(t7.games) == n_stop and t7.status == "stopped" and t7.snapshot()["structure"]["kind"] == "elimination", "elimination reloaded: %d games, the bracket is rebuilt from them" % len(t7.games))
+t7.start()
+wait(t7)
+snap = t7.snapshot()
+sx = snap["structure"]
+keys = [g["key"] for g in t7.games]
+matches = sum(1 for r in sx["rounds"] for m in r["matches"] if not m["bye"])
+champ = sx["champion"]
+check(t7.status == "finished" and champ in ids and len(set(keys)) == len(keys), "elimination resumed to the end: %s, %d games, champion %s" % (t7.status, len(t7.games), champ))
+check(sx["loss"][champ] < 2 and all(sx["loss"][i] == 2 for i in ids if i != champ) and len(sx["out"]) == 4 and matches == 2 * 4 + sx["loss"][champ] and len(t7.games) >= 2 * matches,
+      "elimination: the champion has %d losses, the other four 2, %d matches, %d games" % (sx["loss"][champ], matches, len(t7.games)))
+check(t7.pgn_text().count("[Event ") == len(t7.games), "elimination: PGN has every game")
+lst = [x for x in st7.tournaments.list() if x["id"] == t6.id][0]
+check(lst["format"] == "elimination" and lst["losses"] == 2 and lst["status"] == "finished", "elimination: the saved list knows the format and the number of losses")
+
 # 4. pause and resume without stopping
 cfg = build_tournament_cfg(st, dict(common, name="pause test", format="roundrobin", engines=ids[:3], games=2))
 t5 = st.tournaments.create(cfg)
@@ -95,7 +128,7 @@ check(t5.status == "finished" and len(t5.games) == 6, "paused tournament resumed
 pg = t5.pgn_text()
 check(pg.count("[Event ") == 6 and "pause test" in pg, "PGN export has all games")
 
-for s in (st, st2, st3, st4):
+for s in (st, st2, st3, st4, st6, st7):
     s.shutdown()
 print("\nFAILED: %d" % fails if fails else "\nALL OK")
 sys.exit(1 if fails else 0)

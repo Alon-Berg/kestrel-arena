@@ -117,5 +117,9 @@ svg.board { display: block; border: 1px solid #555; }
 .pvline { font-family: var(--mono); font-size: 12.5px; padding: 2px 6px; border-bottom: 1px solid var(--line2); display: flex; gap: 10px; } .pvline .sc { min-width: 54px; font-weight: 700; } .pvline .mvs { color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .bracket { display: flex; gap: 12px; overflow: auto; padding-bottom: 4px; } .bracket .rnd { display: flex; flex-direction: column; justify-content: space-around; gap: 8px; min-width: 150px; }
 .bracket .match { background: #fff; border: 1px solid #888; } .bracket .match div { display: flex; justify-content: space-between; gap: 8px; padding: 2px 6px; } .bracket .match div.win { font-weight: 700; background: #ececec; } .bracket .match div + div { border-top: 1px solid var(--line2); }
+/* elimination bracket: the matches of a round are grouped by the number of losses of the players */
+.bracket.elim .rnd { justify-content: flex-start; gap: 6px; } .bracket .grp { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; } .bracket .grp .cap { font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--line2); }
+.bracket .match .lv { color: var(--muted); font-weight: 400; }
+.tbl tr.off td { color: var(--muted); }
 .xt td, .xt th { text-align: center; min-width: 34px; padding: 1px 3px; font-size: 12px; } .xt td.s1 { background: #e6e6e6 !important; font-weight: 600; } .xt td.s0 { background: #fff !important; } .xt td.sh { background: #f4f4f4 !important; } .xt td.self { background: #cfcfcf !important; }
 @media (max-width: 1180px) { .grid-setup, .grid-run { grid-template-columns: 1fr; } }

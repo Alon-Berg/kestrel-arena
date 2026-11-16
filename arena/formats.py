@@ -299,7 +299,203 @@ class Knockout:
         return self._replay(done, -1, ui=True)[1]
 
 
-FORMATS = {"roundrobin": RoundRobin, "gauntlet": Gauntlet, "swiss": Swiss, "knockout": Knockout}
+MAX_LOSSES = 10                 # the most losses a player may be allowed in the elimination format
+TIEBREAK_LEVELS = 8             # extra pairs of games for a level match (the same limit as the Knockout's); after that the better seed goes through
+
+
+class Elimination(Knockout):
+    """N-loss elimination: a player is out after `losses` lost matches (1 = knockout, 2 = double elimination with a winners and a losers bracket, 3 = triple ...).
+
+    The players are grouped by the number of matches they have lost. In every round
+      * the unbeaten players (group 0) play the classic seeded bracket of the Knockout, byes for the top seeds in the first round when the field is no power of two, so with one loss the schedule is
+        exactly the Knockout's;
+      * the players of every other group (1 ... losses-1 lost matches) are paired inside the group, best seed against worst, without a rematch wherever that is possible; a group of an odd size (three or
+        more) gives one player a bye (the one with the fewest byes so far, the better seed first), a group of one waits;
+      * a match has a winner (a level match gets pairs of tie-break games, as in the Knockout) - he stays in his group, the loser moves to the next one and is out when he has lost `losses` matches.
+    When every group is down to one player at most, the two players with the most losses play each other, until one player is left. With two losses that is the classic final: if the player with one loss beats
+    the unbeaten one, both have one loss and play the deciding match (the 'bracket reset'); with more losses the one with fewer losses needs the others to win more often in the same way (a player is out
+    only after `losses` lost matches, whoever he plays). So a match between players of different groups only happens when nobody else is left to play, and the field always ends with exactly one survivor
+    (the champion has lost between 0 and losses-1 matches, everybody else exactly `losses`: N*(n-1) + the champion's losses matches in all).
+
+    Schedule: a round = one batch of matches (plus further batches for tie-break pairs), the games of a match share the pairing index: a resumed tournament regenerates the same pairings from the finished games.
+    """
+    name = "elimination"
+
+    def __init__(self, ids, ratings, params, seed):
+        super().__init__(ids, ratings, params, seed)
+        try:
+            lives = int(params.get("losses", 2))
+        except (TypeError, ValueError):
+            lives = 2
+        self.losses = max(1, min(MAX_LOSSES, lives))
+        self.rank = {s: i for i, s in enumerate(self.seeds)}
+
+    def total_games(self):
+        """The least number of games: every player but the champion loses `losses` matches (the champion may lose up to losses-1, and tie-break pairs add games)."""
+        return self.losses * (len(self.seeds) - 1) * self.games
+
+    # ------------------------------------------------------------------------------------------------------ pairing of one loss group
+    def _match_up(self, items, met, allow, budget):
+        """Pairs everybody of `items` (best seed first): the best one with the worst one that fits, and so on; at most `allow` rematches in all. None when impossible (or the node budget is used up)."""
+        if not items:
+            return []
+        a = items[0]
+        for k in range(len(items) - 1, 0, -1):
+            b = items[k]
+            cost = 1 if met.get(frozenset((a, b))) else 0
+            if cost > allow:
+                continue
+            budget[0] -= 1
+            if budget[0] < 0:
+                return None
+            sub = self._match_up(items[1:k] + items[k + 1:], met, allow - cost, budget)
+            if sub is not None:
+                return [(a, b)] + sub
+        return None
+
+    def _pair_group(self, members, byes, met):
+        """(pairs, bye) for the players of one group: with an odd number one gets a bye (fewest byes so far, better seed first); everybody else is paired best against worst, avoiding rematches
+        (a player who gets the bye is chosen so that the others need no rematch if that is possible)."""
+        order = sorted(members, key=self.rank.get)
+        cands = sorted(order, key=lambda s: (byes[s], self.rank[s])) if len(order) % 2 else [None]
+        budget = [20000]
+        for allow in range(len(order) // 2 + 1):
+            for bye in cands:
+                pairs = self._match_up([s for s in order if s != bye], met, allow, budget)
+                if pairs is not None:
+                    return pairs, bye
+                if budget[0] < 0:
+                    break
+            if budget[0] < 0:
+                break
+        rest = [s for s in order if s != cands[0]]                     # (a very large group: plain best against worst)
+        return [(rest[i], rest[len(rest) - 1 - i]) for i in range(len(rest) // 2)], cands[0]
+
+    def _plan_round(self, loss, byes, met, wb):
+        """The matches of the next round: [{group, x, y, bye, idx}] (x = the better seed; a bye has y None; group None = players of different groups). wb: the bracket of the unbeaten players."""
+        n_out = self.losses
+        groups = [[] for _ in range(n_out)]
+        for s in self.seeds:
+            if loss[s] < n_out:
+                groups[loss[s]].append(s)
+        entries, idx = [], 0
+        for x, y in wb:                                      # unbeaten players: the bracket (a slot without a player is a bye)
+            entries.append({"group": 0, "x": x, "y": y, "bye": x is None or y is None, "idx": idx})
+            idx += 1
+        for k in range(1, n_out):
+            if len(groups[k]) < 2:
+                continue                                     # one player in a group waits for the others
+            pairs, bye = self._pair_group(groups[k], byes, met)
+            for x, y in pairs:
+                entries.append({"group": k, "x": x, "y": y, "bye": False, "idx": idx})
+                idx += 1
+            if bye is not None:
+                entries.append({"group": k, "x": bye, "y": None, "bye": True, "idx": None})
+        if not any(not e["bye"] for e in entries):           # nobody has a partner in his group: the two with the most losses meet
+            two = sorted((s for s in self.seeds if loss[s] < n_out), key=lambda s: (-loss[s], self.rank[s]))[:2]
+            x, y = sorted(two, key=self.rank.get)
+            entries.append({"group": None, "x": x, "y": y, "bye": False, "idx": idx})
+        return entries
+
+    # ------------------------------------------------------------------------------------------------------------------ replay
+    def _struct(self, rounds_ui, loss, out, champion, live=None, rnd=None):
+        loss, out = dict(loss), list(out)
+        for m in live or []:                                 # matches of the round in progress that are decided count at once
+            if m["done"] and not m["bye"]:
+                lost = m["b"] if m["winner"] == m["a"] else m["a"]
+                loss[lost] += 1
+                if loss[lost] >= self.losses:
+                    out.append({"id": lost, "round": rnd})
+        return {"kind": "elimination", "losses": self.losses, "games": self.games, "rounds": rounds_ui, "loss": loss, "out": out, "champion": champion}
+
+    def _walk(self, done, batch_no, ui=False):
+        """Walks the tournament with the finished games. Returns (pairings of batch `batch_no` or None, structure for the UI)."""
+        by_batch = {}
+        for g in done:
+            by_batch.setdefault(g.get("batch"), []).append(g)
+        n_out, rank = self.losses, self.rank
+        loss = {s: 0 for s in self.seeds}
+        byes = {s: 0 for s in self.seeds}
+        met, out, rounds_ui = {}, [], []
+        wb = self._first_round()
+        b = rnd = 0
+        guard = 200 + 50 * n_out * len(self.seeds)
+        while True:
+            alive = [s for s in self.seeds if loss[s] < n_out]
+            if len(alive) == 1:
+                return None, self._struct(rounds_ui, loss, out, alive[0])
+            rnd += 1
+            if rnd > guard:
+                raise RuntimeError("the elimination does not end")
+            entries = self._plan_round(loss, byes, met, wb)
+            ui_matches, pending, score, by_idx = [], {}, {}, {}
+            for e in entries:
+                x, y = e["x"], e["y"]
+                m = {"a": x, "b": y, "sa": 0, "sb": 0, "winner": (x or y) if e["bye"] else None, "bye": e["bye"], "done": e["bye"], "group": e["group"],
+                     "final": len(alive) == 2, "tb": 0, "la": loss.get(x), "lb": loss.get(y)}
+                ui_matches.append(m)
+                if not e["bye"]:
+                    pending[e["idx"]] = (x, y)
+                    score[e["idx"]] = [0.0, 0.0]
+                    by_idx[e["idx"]] = m
+            level = 0
+            while pending:
+                if not ui and b == batch_no:
+                    return [Pairing(x, y, self.games if level == 0 else 2, rnd, i, "tiebreak" if level else "") for i, (x, y) in sorted(pending.items())], None
+                expected = self.games if level == 0 else 2
+                cnt = {i: 0 for i in pending}
+                for g in by_batch.get(b, []):
+                    i = g.get("pair")
+                    if i in pending:
+                        x, y = pending[i]
+                        pa, pb = points_of(g["result"], g["white"] == x)
+                        score[i][0] += pa
+                        score[i][1] += pb
+                        cnt[i] += 1
+                for i in pending:
+                    by_idx[i]["sa"], by_idx[i]["sb"], by_idx[i]["tb"] = score[i][0], score[i][1], level
+                unfinished = ui and any(cnt[i] < expected for i in pending)       # (a missing game of an earlier batch is not waited for, as in the Knockout)
+                nxt = {}
+                for i, (x, y) in pending.items():
+                    sa, sb = score[i]
+                    if unfinished and cnt[i] < expected:
+                        nxt[i] = (x, y)                      # still being played
+                    elif sa != sb or level >= TIEBREAK_LEVELS:
+                        by_idx[i]["winner"] = x if (sa > sb or (sa == sb and rank[x] < rank[y])) else y
+                        by_idx[i]["done"] = True
+                    else:
+                        nxt[i] = (x, y)
+                if unfinished:                               # a round in progress: the matches that are decided already count at once
+                    rounds_ui.append({"round": rnd, "matches": ui_matches})
+                    return None, self._struct(rounds_ui, loss, out, None, live=ui_matches, rnd=rnd)
+                b += 1
+                pending = nxt
+                level += 1
+            winners0 = []                                    # the round is decided: losses, byes, the next bracket round of the unbeaten players
+            for e, m in zip(entries, ui_matches):
+                w = m["winner"]
+                if e["bye"]:
+                    byes[w] += 1
+                else:
+                    lost = e["y"] if w == e["x"] else e["x"]
+                    loss[lost] += 1
+                    pair = frozenset((e["x"], e["y"]))
+                    met[pair] = met.get(pair, 0) + 1
+                    if loss[lost] >= n_out:
+                        out.append({"id": lost, "round": rnd})
+                if e["group"] == 0:
+                    winners0.append(w)
+            wb = [(winners0[i], winners0[i + 1]) for i in range(0, len(winners0) - 1, 2)] if len(winners0) >= 2 else []
+            rounds_ui.append({"round": rnd, "matches": ui_matches})
+
+    def next_batch(self, done, batch_no):
+        return self._walk(done, batch_no)[0]
+
+    def structure(self, done):
+        return self._walk(done, -1, ui=True)[1]
+
+
+FORMATS = {"roundrobin": RoundRobin, "gauntlet": Gauntlet, "swiss": Swiss, "knockout": Knockout, "elimination": Elimination}
 
 
 def make_scheduler(fmt, ids, ratings, params, seed):

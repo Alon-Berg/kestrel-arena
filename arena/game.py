@@ -299,12 +299,16 @@ def build_pgn(rec, names, event="Kestrel Arena", tc=None, site="Kestrel Arena", 
     h["Event"] = event
     h["Site"] = site
     h["Date"] = (rec.get("ended") or time.strftime("%Y-%m-%d"))[:10].replace("-", ".")
-    h["Round"] = str(rec.get("round") if rec.get("round") is not None else (game_no or "-"))
+    r = rec.get("round")
+    h["Round"] = ("%d.%d" % (r // 1000 + 1, r % 1000) if r >= 1000 else str(r)) if isinstance(r, int) else str(game_no or "-")        # (round robins with several rounds number them 1000 * repeat + round)
     h["White"] = names.get(rec["white"], rec["white"])
     h["Black"] = names.get(rec["black"], rec["black"])
     h["Result"] = rec.get("result") or "*"
-    if tc:
-        h["TimeControl"] = ("%g+%g" % (tc.get("base", 0), tc.get("inc", 0))) if tc.get("mode", "time") == "time" else tc_label(tc)
+    if tc:                                                 # PGN: 'base+increment' in seconds, '*seconds' for a fixed time per move, '?' when the limit is nodes or a depth (said in the next tag)
+        mode = tc.get("mode", "time")
+        h["TimeControl"] = ("%g+%g" % (tc.get("base", 0), tc.get("inc", 0))) if mode == "time" else ("*%g" % (tc.get("ms", 100) / 1000.0) if mode == "movetime" else "?")
+        if mode in ("nodes", "depth"):
+            h["Limit"] = tc_label(tc)
     if rec.get("start_fen"):
         h["SetUp"] = "1"
         h["FEN"] = rec["start_fen"]

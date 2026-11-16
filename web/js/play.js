@@ -206,7 +206,7 @@
   const analysePosition = A.throttle(async () => {
     if (!G.analysing) return;
     const pos = curPos();
-    G.lines = []; renderLines();
+    G.lines = []; G.anaError = ''; renderLines();
     try { await A.post('/api/analysis/start', { engine: G.cfg.aengine, fen: pos.fen, multipv: G.cfg.mpv }); } catch (e) { A.toast(e.message, 'err'); G.analysing = false; renderAnaButton(); }
   }, 120);
 
@@ -222,6 +222,7 @@
   function renderLines() {
     A.clear(linesEl);
     if (!G.analysing) { linesEl.appendChild(h('div', { class: 'muted', style: 'padding:6px' }, 'Analysis is off. Start it to see the engine\'s best lines for the position on the board.')); return; }
+    if (G.anaError) { linesEl.appendChild(h('div', { class: 'bad', style: 'padding:6px' }, 'Analysis stopped: ' + G.anaError)); return; }          // (the engine crashed or hangs)
     if (!G.lines.length) { linesEl.appendChild(h('div', { class: 'muted', style: 'padding:6px' }, 'Thinking...')); return; }
     G.lines.forEach((l) => {
       const sc = l.mate !== null && l.mate !== undefined ? '#' + l.mate : fmt.eval(l.cp);
@@ -239,7 +240,7 @@
     if (!G.analysing) return;
     const pos = curPos();
     if (ev.fen.split(' ').slice(0, 4).join(' ') !== pos.fen.split(' ').slice(0, 4).join(' ')) return;      // only the position on the board (first four FEN fields)
-    G.lines = ev.lines;
+    G.lines = ev.lines; G.anaError = ev.error || '';
     if (ev.lines.length) { G.evalCp = ev.lines[0].mate ? null : ev.lines[0].cp; G.evalMate = ev.lines[0].mate || null; if (ev.lines[0].mate === 0) G.evalMate = null; }
     renderLines(); renderEval();
   });

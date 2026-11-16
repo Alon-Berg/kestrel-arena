@@ -31,6 +31,24 @@ def _entry_from_san(line):
     return {"fen": None, "moves": moves}
 
 
+def _board_of_line(line):
+    """The position of one line of an opening file: an EPD (four fields, then operations such as 'bm e4;' or 'ce 28;') or a plain FEN (six fields: the move counters would be read as an operation by
+    the EPD parser), also a FEN followed by a comment. None when the line is neither."""
+    b = chess.Board()
+    try:
+        b.set_epd(line)
+        return b
+    except Exception:
+        pass
+    parts = line.replace(";", " ; ").split()
+    for n in (6, 5, 4):                                    # (a FEN, a FEN without the move number, or the first four fields)
+        try:
+            return chess.Board(" ".join(parts[:n]))
+        except ValueError:
+            continue
+    return None
+
+
 def load_epd(path, limit=200000):
     out = []
     with open(path, encoding="utf-8", errors="ignore") as f:
@@ -38,10 +56,8 @@ def load_epd(path, limit=200000):
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
-            try:
-                b = chess.Board()
-                b.set_epd(line)
-            except Exception:
+            b = _board_of_line(line)
+            if b is None:
                 continue
             fen = b.fen()
             out.append({"fen": None if fen == chess.STARTING_FEN else fen, "moves": []})
@@ -111,7 +127,10 @@ def build_book(cfg, data_dir, resource_dir=None):
         p = cfg["path"]
         if not os.path.exists(p):
             raise ValueError("opening file not found: %s" % p)
-        entries = load_pgn(p) if p.lower().endswith(".pgn") else load_epd(p)
+        try:
+            entries = load_pgn(p) if p.lower().endswith(".pgn") else load_epd(p)
+        except OSError as e:
+            raise ValueError("cannot read the opening file %s: %s" % (p, e))
         if not entries:
             raise ValueError("no openings could be read from %s" % p)
         return OpeningBook(entries, seed, shuffle, os.path.basename(p))

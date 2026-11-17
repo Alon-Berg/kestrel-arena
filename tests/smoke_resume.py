@@ -29,10 +29,13 @@ st.tournaments.root = tdir
 ids = ["e%d" % i for i in range(5)]
 
 
-def wait(t, secs=240):
+def wait(t, secs=600):
     t0 = time.time()
     while t.status in ("running", "paused", "stopping") and time.time() - t0 < secs:
         time.sleep(0.2)
+    c = getattr(t, "controller", None)                 # (the controller saves the settings once more after the status has changed: wait for that, a restarted app has no such old thread)
+    if c is not None:
+        c.join(30)
 
 
 common = {"tc": {"mode": "nodes", "n": 600}, "concurrency": 2, "hash": 16, "adj": {"max_plies": 200}, "openings": {"source": "builtin"}}
@@ -99,7 +102,7 @@ st7.tournaments.root = tdir
 t7 = st7.tournaments.load(t6.id)
 check(len(t7.games) == n_stop and t7.status == "stopped" and t7.snapshot()["structure"]["kind"] == "bracket", "elimination reloaded: %d games, the bracket is rebuilt from them" % len(t7.games))
 t7.start()
-wait(t7)
+wait(t7, 900)                                                  # (five near-equal engines: a final that stays level for all 8 tie-break pairs alone takes 18 games; one run needed 144 games and 293 s)
 snap = t7.snapshot()
 sx = snap["structure"]
 keys = [g["key"] for g in t7.games]

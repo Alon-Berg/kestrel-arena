@@ -197,6 +197,10 @@ def referee(sched, games, batches, N):
             two = sorted(alive, key=lambda s: (-loss[s], rank[s]))[:2]
             if len(lvl0) != 1 or {lvl0[0].a, lvl0[0].b} != set(two):
                 bad.append("final stage round %d: not the two players with the most losses" % r)
+            else:
+                f = st["final"][final_rounds - 1] if final_rounds <= len(st["final"]) else {}
+                if (f.get("a"), f.get("b"), f.get("la"), f.get("lb")) != (lvl0[0].a, lvl0[0].b, loss[lvl0[0].a], loss[lvl0[0].b]):
+                    bad.append("final stage round %d: the drawing shows other players or losses (before the match) than the games" % r)
         for p in lvl0:
             sa, sb = score[(r, p.index)]
             win = p.a if sa > sb else (p.b if sb > sa else (p.a if rank[p.a] < rank[p.b] else p.b))
@@ -323,8 +327,8 @@ games, batches = drive(sched, reset_results)
 st = sched.structure(games)
 f = st["final"]
 check(len(f) == 2 and f[0]["a"] == "p1" and f[0]["b"] == "p2" and f[0]["winner"] == "p2" and {f[1]["a"], f[1]["b"]} == {"p1", "p2"} and st["champion"] == f[1]["winner"] and st["loss"][st["champion"]] == 1
-      and len(games) == 15 * 2 and not referee(sched, games, batches, 2),
-      "the champion of the losers bracket wins the grand final: both have one loss, the deciding match (the reset) follows: %d games, champion %s" % (len(games), st["champion"]))
+      and len(games) == 15 * 2 and not referee(sched, games, batches, 2) and (f[0]["la"], f[0]["lb"], f[1]["la"], f[1]["lb"]) == (0, 1, 1, 1),
+      "the champion of the losers bracket wins the grand final: both have one loss, the deciding match (the reset) follows (losses before the matches: 0 and 1, then 1 and 1): %d games, champion %s" % (len(games), st["champion"]))
 
 # a triple elimination of 5 where the champion of the losers brackets keeps winning: the final stage goes on until one player is left
 sched3 = formats.make_scheduler("elimination", ids[:5], ratings, {"losses": 3, "bracket": True}, 1)

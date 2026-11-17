@@ -593,9 +593,9 @@ class Elimination(Knockout):
             sa, sb = points(f["key"], a, b)
             got = w.res.get(f["key"])
             fin.append({"no": f["no"], "a": a, "b": b, "sa": sa, "sb": sb, "tb": w.tb.get(f["key"], 0), "winner": got[0] if got else None, "done": got is not None, "s": first_s if i == 0 else [None, None],
-                        "g": w.gids.get(f["key"], [])})
+                        "g": w.gids.get(f["key"], []), "la": f["la"], "lb": f["lb"]})
         if not fin and first is not None:                              # the final stage has not begun: its first match, with the places it is made of
-            fin.append({"no": None, "a": None, "b": None, "sa": 0.0, "sb": 0.0, "tb": 0, "winner": None, "done": False, "s": first_s})
+            fin.append({"no": None, "a": None, "b": None, "sa": 0.0, "sb": 0.0, "tb": 0, "winner": None, "done": False, "s": first_s, "la": None, "lb": None})
         return {"kind": "bracket", "losses": self.losses, "games": self.games, "p": br.p, "brackets": brackets, "final": fin, "loss": dict(w.loss), "out": list(w.out), "champion": champion}
 
     # ------------------------------------------------------------------------------------------------------------------ the walk
@@ -683,7 +683,7 @@ class Elimination(Knockout):
             key = "F%d" % (no - len(br.real))
             w.pts[key] = {x: 0.0, y: 0.0}
             w.tb[key] = 0
-            finals.append({"key": key, "no": no, "a": x, "b": y})
+            finals.append({"key": key, "no": no, "a": x, "b": y, "la": w.loss[x], "lb": w.loss[y]})       # (their losses before this match: they are what makes these two meet)
             what, val = play({0: (key, x, y)}, rnd)
             if what == "batch":
                 return val, None

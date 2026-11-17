@@ -408,19 +408,24 @@
   const lossTxt = (n) => n + (n === 1 ? ' loss' : ' losses');
 
   // ---- the elimination bracket as a tree: a box for every match at its place, lines from the matches that feed it ----------------------------------
-  const BK = { w: 176, h: 42, hb: 22, colGap: 30, rowH: 54, pad: 8, top: 14 };
+  const BK = { w: 176, fw: 232, h: 42, hb: 22, colGap: 30, rowH: 54, pad: 8, top: 14 };          // fw: the boxes of the final stage are wider, they show the losses of the two players
 
   function renderBracketTree(st) {
     const nm = (id) => T.names[id];
     const live = new Set();            // the matches that are being played now
     T.active.forEach((g) => { live.add(g.white + '|' + g.black); live.add(g.black + '|' + g.white); });
     const place = (s) => (s ? (s[0] === 'W' ? 'Winner of #' + s[1] : s[0] === 'L' ? 'Loser of #' + s[1] : 'Seed ' + (s[1] + 1)) : 'bye');
+    const lossTag = (id, lo) => {      // final stage: the losses of a player before the match (they are what makes these two meet), in bold when one more loss puts the player out
+      if (lo === undefined || lo === null) return null;
+      const last = lo === st.losses - 1;
+      return h('span', { class: 'ls' + (last ? ' last' : ''), title: nm(id) + ': ' + lossTxt(lo) + ' before this match (out at ' + st.losses + ')' + (last ? ' - one more loss and it is out' : '') }, lossTxt(lo));
+    };
     const row = (m, i) => {            // one player of a match, or where he will come from
       const id = i === 0 ? m.a : m.b, sc = i === 0 ? m.sa : m.sb;
-      if (id) return h('div', { class: 'r' + (m.winner && m.winner === id ? ' win' : '') }, h('span', { class: 'nm', title: nm(id) }, nm(id)), m.kind === 'real' && (m.done || sc || m.tb) ? h('span', { class: 'mono' }, fmt.pts(sc)) : null);
+      if (id) return h('div', { class: 'r' + (m.winner && m.winner === id ? ' win' : '') }, h('span', { class: 'nm', title: nm(id) }, nm(id)), lossTag(id, i === 0 ? m.la : m.lb), m.kind === 'real' && (m.done || sc || m.tb) ? h('span', { class: 'mono' }, fmt.pts(sc)) : null);
       return h('div', { class: 'r ph' }, h('span', { class: 'nm' }, place(m.s[i])));
     };
-    const box = (m, x, y, hh) => h('div', { class: 'mb' + (m.kind === 'bye' ? ' bye' : '') + (m.kind === 'real' && !m.done && m.a && m.b && live.has(m.a + '|' + m.b) ? ' live' : '') + (m.g && m.g.length ? ' clk' : ''), onclick: m.g && m.g.length ? () => selectFinished(m.g[0]) : null, style: 'left:' + x + 'px;top:' + y + 'px;height:' + hh + 'px',
+    const box = (m, x, y, hh, ww) => h('div', { class: 'mb' + (m.kind === 'bye' ? ' bye' : '') + (m.kind === 'real' && !m.done && m.a && m.b && live.has(m.a + '|' + m.b) ? ' live' : '') + (m.g && m.g.length ? ' clk' : ''), onclick: m.g && m.g.length ? () => selectFinished(m.g[0]) : null, style: 'left:' + x + 'px;top:' + y + 'px;height:' + hh + 'px' + (ww ? ';width:' + ww + 'px' : ''),
       title: (m.no ? 'Match #' + m.no : '') + (m.g && m.g.length ? ' - click to replay its first game' : '') + (m.tb ? ' - ' + m.tb + ' extra pair' + (m.tb > 1 ? 's' : '') + ' of games' : '') },
       m.no ? h('span', { class: 'no' }, '#' + m.no) : null,
       m.kind === 'bye' ? [row(m, m.s[0] ? 0 : 1), h('span', { class: 'bye-tag' }, 'bye')] : [row(m, 0), row(m, 1)]);
@@ -451,20 +456,22 @@
     const byNo = new Map();            // match number -> its place in the drawing (the lines to the first match of the final stage start there)
     st.brackets.forEach((bk) => bk.rounds.forEach((rd) => rd.matches.forEach((m) => { if (m.no) byNo.set(m.no, pos.get(m.id)); })));
     st.final.forEach((f, i) => {
-      const m = { kind: 'real', a: f.a, b: f.b, sa: f.sa, sb: f.sb, tb: f.tb, winner: f.winner, done: f.done, s: f.s, no: f.no, g: f.g };
+      const m = { kind: 'real', a: f.a, b: f.b, sa: f.sa, sb: f.sb, tb: f.tb, winner: f.winner, done: f.done, s: f.s, no: f.no, g: f.g, la: f.la, lb: f.lb };
       if (i === 0) (f.s || []).forEach((sl) => { const a = sl && byNo.get(sl[1]); if (a) segs.push('M' + (a.x + BK.w) + ' ' + a.cy + 'H' + (fx - BK.colGap / 2) + 'V' + (fy + BK.h / 2) + 'H' + fx); });
-      els.push(h('div', { class: 'ch', style: 'left:' + fx + 'px;top:' + (fy - 30) + 'px;width:' + BK.w + 'px' }, st.losses === 2 ? (i === 0 ? 'Grand final' : 'Deciding match') : 'Final ' + (i + 1)));
-      els.push(box(m, fx, fy, BK.h));
+      els.push(h('div', { class: 'ch', style: 'left:' + fx + 'px;top:' + (fy - 30) + 'px;width:' + BK.fw + 'px' }, st.losses === 2 ? (i === 0 ? 'Grand final' : 'Deciding match') : 'Final ' + (i + 1)));
+      els.push(box(m, fx, fy, BK.h, BK.fw));
       fy += BK.rowH + 22;
     });
-    if (st.champion) els.push(h('div', { class: 'mb champ', style: 'left:' + fx + 'px;top:' + (fy + 6) + 'px;height:' + BK.h + 'px' }, h('div', { class: 'r win' }, h('span', { class: 'nm', title: nm(st.champion) }, nm(st.champion))), h('div', { class: 'r' }, h('span', { class: 'nm muted' }, 'Champion, ' + lossTxt(st.loss[st.champion])))));
-    const W = fx + BK.w + BK.pad, H = Math.max(y, fy + BK.h + 30);
+    if (st.champion) els.push(h('div', { class: 'mb champ', style: 'left:' + fx + 'px;top:' + (fy + 6) + 'px;height:' + BK.h + 'px;width:' + BK.fw + 'px' }, h('div', { class: 'r win' }, h('span', { class: 'nm', title: nm(st.champion) }, nm(st.champion))), h('div', { class: 'r' }, h('span', { class: 'nm muted' }, 'Champion, ' + lossTxt(st.loss[st.champion])))));
+    const W = fx + BK.fw + BK.pad, H = Math.max(y, fy + BK.h + 30);
     const lines = [];
     for (let k = 0; k < st.losses; k++) {            // how many players are in with how many losses (the names only when there are few)
       const ids = T.snap.cfg.engine_ids.filter((id) => st.loss[id] === k && !st.out.some((o) => o.id === id));
       if (ids.length) lines.push(h('div', {}, h('b', {}, lossTxt(k) + ' (' + ids.length + ')'), ids.length <= 8 ? [': ', ids.map((id) => nm(id)).join(', ')] : null));
     }
     if (st.out.length) lines.push(h('div', { class: 'muted' }, 'Out (' + st.out.length + ')'));
+    if (st.losses >= 2) lines.push(h('div', { class: 'muted' }, st.losses === 2 ? 'Grand final: the two champions meet; if the champion of the losers bracket wins it, both have one loss and the deciding match follows.'
+      : 'Final stage: the two players with the most losses play each other, again and again, until one of them is out (' + st.losses + ' losses). The losses behind a name are those before that match.'));
     standBody.appendChild(h('div', { class: 'help', style: 'padding:2px 2px 8px' }, lines));
     standBody.appendChild(h('div', { class: 'brk', style: 'width:' + W + 'px;height:' + H + 'px' }, svg('svg', { width: W, height: H }, svg('path', { d: segs.join(''), fill: 'none', stroke: '#8a8a8a', 'stroke-width': 1 })), els));
   }

@@ -130,6 +130,7 @@ svg.board { display: block; border: 1px solid #555; }
 .brk .mb.bye { background: transparent; border: 1px dashed #aaa; } .brk .mb.bye .r { height: 20px; } .brk .mb .bye-tag { position: absolute; right: 5px; top: 0; line-height: 19px; font-size: 11px; color: var(--muted); }
 .brk .mb .no { position: absolute; left: 0; top: -12px; font-size: 10px; line-height: 10px; color: var(--muted); }
 .brk .mb.clk { cursor: pointer; } .brk .mb.clk:hover { background: var(--hover); }
+.brk .mb .ls { margin-left: auto; flex: none; font-size: 11px; font-weight: 400; color: var(--muted); } .brk .mb .ls.last { color: #000; font-weight: 700; }
 .brk .bt { position: absolute; font-weight: 700; font-size: 13px; white-space: nowrap; } .brk .ch { position: absolute; font-size: 11px; color: var(--muted); }
 .xt td, .xt th { text-align: center; min-width: 34px; padding: 1px 3px; font-size: 12px; } .xt td.s1 { background: #e6e6e6 !important; font-weight: 600; } .xt td.s0 { background: #fff !important; } .xt td.sh { background: #f4f4f4 !important; } .xt td.self { background: #cfcfcf !important; }
 @media (max-width: 1180px) { .grid-setup, .grid-run { grid-template-columns: 1fr; } }

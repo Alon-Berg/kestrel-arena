@@ -43,6 +43,43 @@ for n, sizes in ((16, [4, 4, 2, 2, 1, 1]), (32, [8, 8, 4, 4, 2, 2, 1, 1]), (4, [
 b2 = Bracket(2, 2)
 check(b2.brackets[1]["rounds"] == [] and b2.first_final() == (("W", 0), ("L", 0)), "2 players: no losers bracket, the grand final is the winner against the loser of the only match")
 
+# ------------------------------------------------------------------------------------------------------------------------------ the final ladder (ladder=True)
+bl = Bracket(8, 2, ladder=True)
+Ml = bl.matches
+check(len(bl.ladder) == 1 and Ml[bl.ladder[0]].src == (("W", lb[3][0]), ("W", wb[2][0])) and Ml[bl.ladder[0]].fk == (1, 0) and Ml[bl.ladder[0]].no == 14 and bl.steps[-1] == bl.ladder and len(bl.steps) == 6,
+      "2 losses: the ladder is one match, the grand final (the champion of the losers bracket against the champion of the winners bracket), number 14, the last step")
+b3 = Bracket(8, 3, ladder=True)
+check([b3.matches[i].fk for i in b3.ladder] == [(2, 1), (None, 0)] and b3.counts() == [7, 6, 5] and len(b3.real) == 7 + 6 + 5 + 2 and [b3.matches[i].no for i in b3.ladder] == [19, 20]
+      and b3.steps[-2:] == [[b3.ladder[0]], [b3.ladder[1]]] and b3.matches[b3.ladder[1]].src[0] == ("W", b3.ladder[0]),
+      "3 losses: the ladder is two matches (bottom bracket against the second bottom, the winner against the winners bracket), one match per step after all the matches of the brackets")
+b2l = Bracket(2, 3, ladder=True)
+check(len(b2l.ladder) == 1 and b2l.matches[b2l.ladder[0]].src == (("L", 0), ("W", 0)) and b2l.counts() == [1, 0, 0],
+      "2 players, 3 losses: a bracket with one player left has him as its champion, so the ladder is the two players of the only match again")
+problems = []
+for N in range(1, 8):
+    for n in list(range(2, 41)) + [48, 64, 65, 102]:
+        b = Bracket(n, N, ladder=True)
+        K = min(N, n)                                                                                   # the brackets that have a champion
+        champs = [b.canon(bk["champion"]) for bk in b.brackets]
+        if any(c is None for c in champs[:K]) or any(c is not None for c in champs[K:]):
+            problems.append("n=%d N=%d: the brackets that have a champion" % (n, N))
+            continue
+        if len(b.ladder) != K - 1 or b.counts() != [max(0, n - 1 - k) for k in range(N)] or len(b.real) != sum(b.counts()) + K - 1:
+            problems.append("n=%d N=%d: %d ladder matches, counts %s" % (n, N, len(b.ladder), b.counts()))
+        want = [(champs[K - 1], champs[K - 2]) if i == 0 else (("W", b.ladder[i - 1]), champs[K - 2 - i]) for i in range(K - 1)]          # bottom against second bottom, then the winner against the next bracket up
+        if [b.matches[i].src for i in b.ladder] != want:
+            problems.append("n=%d N=%d: the places of the ladder" % (n, N))
+        if K > 1 and (b.steps[-(K - 1):] != [[i] for i in b.ladder] or [b.matches[i].no for i in b.ladder] != list(range(len(b.real) - K + 2, len(b.real) + 1)) or any(b.matches[i].kind != "real" for i in b.ladder)):
+            problems.append("n=%d N=%d: order of play of the ladder" % (n, N))
+        used = {}
+        for i in b.ladder:
+            for sl in b.matches[i].src:
+                used[sl] = used.get(sl, 0) + 1
+        if any(v != 1 for v in used.values()) or len(used) != 2 * (K - 1):
+            problems.append("n=%d N=%d: a place is used twice" % (n, N))
+check(not problems, "the ladder, n = 2..40, 48, 64, 65, 102 x 1..7 losses: min(losses, n) - 1 single matches after all bracket matches, one per step, every champion used once, the winner on to the next bracket up%s"
+      % ("" if not problems else " - " + "; ".join(problems[:4])))
+
 # --------------------------------------------------------------------------------------------------------- counts, byes, order, usage of every result
 problems = []
 for N in range(1, 7):
@@ -229,13 +266,115 @@ def referee(sched, games, batches, N):
     return bad
 
 
-def run(n, N, policy, seed=1, gpm=2, seeding="rating"):
+def referee2(sched, games, batches, N):
+    """The same for the bracket with the final ladder (bracket = 2): the matches of the brackets as above, then the survivors (one for every bracket, with 0 .. min(N, n)-1 losses) meet from the bottom up,
+    one match each, and the loser of each match is out; returns the problems."""
+    bad = []
+    br, order = sched.bracket, sched.seeds
+    n = len(order)
+    K = min(N, n)
+    rank = {s: k for k, s in enumerate(order)}
+    loss = {s: 0 for s in order}
+    gone = set()
+    st = sched.structure(games)
+    by_round, batch_round, pairing, score = {}, {}, {}, {}
+    for bi, batch in enumerate(batches):
+        for p in batch:
+            by_round.setdefault(p.round, []).append((bi, p))
+            if batch_round.setdefault(bi, p.round) != p.round:
+                bad.append("batch %d mixes rounds" % bi)
+            if pairing.setdefault((p.round, p.index), (p.a, p.b)) != (p.a, p.b):
+                bad.append("a tie-break changes the players of a match")
+    for g in games:
+        r = batch_round[g["batch"]]
+        a, b = pairing[(r, g["pair"])]
+        pa, pb = formats.points_of(g["result"], g["white"] == a)
+        s = score.setdefault((r, g["pair"]), [0.0, 0.0])
+        s[0] += pa
+        s[1] += pb
+    nb = len(br.steps) - len(br.ladder)                                            # the steps of the brackets, the ladder follows (one match per step)
+    per_bracket = [0] * N
+    matches, chain, cur, fin = 0, None, None, []
+    for r in sorted(by_round):
+        items = by_round[r]
+        first = min(bi for bi, p in items)
+        lvl0 = [p for bi, p in items if bi == first]
+        play = [s for p in lvl0 for s in (p.a, p.b)]
+        if len(play) != len(set(play)):
+            bad.append("round %d: a player plays twice" % r)
+        if any(s in gone for s in play):
+            bad.append("round %d: a player who is out plays" % r)
+        if any(p.tag for p in lvl0) or any(p.games != sched.games for p in lvl0):
+            bad.append("round %d: wrong games or a tie-break first" % r)
+        if r <= nb:
+            ids = br.steps[r - 1]
+            if len(lvl0) != len(ids):
+                bad.append("step %d: %d matches, the bracket has %d" % (r, len(lvl0), len(ids)))
+            for p in sorted(lvl0, key=lambda p: p.index):
+                m = br.matches[ids[p.index]]
+                if not (loss[p.a] == loss[p.b] == m.k):
+                    bad.append("step %d: match %d of bracket %d between players with %d and %d losses" % (r, m.no, m.k, loss[p.a], loss[p.b]))
+                per_bracket[m.k] += 1
+        else:
+            if chain is None:                                                      # the first match of the ladder: the survivors of the brackets, the bottom bracket (most losses) first
+                chain = sorted((s for s in order if s not in gone), key=lambda s: -loss[s])
+                cur = chain[0]
+                if [loss[s] for s in chain] != list(range(K - 1, -1, -1)):
+                    bad.append("the survivors of the brackets have the losses %s, not %s" % ([loss[s] for s in chain], list(range(K - 1, -1, -1))))
+            j = len(fin)
+            want = {cur, chain[j + 1]} if j + 1 < len(chain) else set()
+            if len(lvl0) != 1 or {lvl0[0].a, lvl0[0].b} != want:
+                bad.append("ladder match %d is not between the survivor and the next bracket up" % (j + 1))
+        for p in lvl0:
+            sa, sb = score[(r, p.index)]
+            win = p.a if sa > sb else (p.b if sb > sa else (p.a if rank[p.a] < rank[p.b] else p.b))
+            lose = p.b if win == p.a else p.a
+            if r > nb:
+                fin.append((p.a, p.b, loss[p.a], loss[p.b], win))
+                gone.add(lose)
+                cur = win
+            elif loss[lose] + 1 >= N:
+                gone.add(lose)
+            loss[lose] += 1
+            matches += 1
+    alive = [s for s in order if s not in gone]
+    if len(alive) != 1:
+        bad.append("%d survivors" % len(alive))
+        return bad
+    champ = alive[0]
+    if len(fin) != K - 1 or (fin and fin[-1][4] != champ):
+        bad.append("%d ladder matches (expected %d), the winner of the last one is not the champion" % (len(fin), K - 1))
+    if any(loss[s] < 1 for s in order if s != champ):
+        bad.append("somebody is out without a loss")
+    want_matches = sum(max(0, n - 1 - k) for k in range(N)) + K - 1
+    if matches != want_matches:
+        bad.append("%d matches, expected %d" % (matches, want_matches))
+    if per_bracket != br.counts():
+        bad.append("matches per bracket %s, the bracket has %s" % (per_bracket, br.counts()))
+    if st["kind"] != "bracket" or not st["ladder"] or st["champion"] != champ or st["loss"] != loss or len(st["out"]) != n - 1 or len(st["final"]) != K - 1:
+        bad.append("the structure for the drawing differs (champion %s, referee %s, %d final matches)" % (st["champion"], champ, len(st["final"])))
+    else:
+        for f, (a, b, la, lb, win) in zip(st["final"], fin):
+            if {f["a"]: f["la"], f["b"]: f["lb"]} != {a: la, b: lb} or f["winner"] != win or not f["done"]:
+                bad.append("a match of the ladder in the drawing differs from the games")
+                break
+    if any(not m["done"] for bk in st["brackets"] for rnd in bk["rounds"] for m in rnd["matches"]) or any(not f["done"] for f in st["final"]):
+        bad.append("a match of the drawing is not done in a finished tournament")
+    listed = sorted(g for bk in st["brackets"] for rnd in bk["rounds"] for m in rnd["matches"] if m["kind"] == "real" for g in m["g"]) + sorted(g for f in st["final"] for g in f["g"])
+    if sorted(listed) != [g["gid"] for g in games]:
+        bad.append("the games of the matches in the drawing are not all the games (%d of %d)" % (len(listed), len(games)))
+    if len(games) < sched.total_games():
+        bad.append("fewer games than the minimum")
+    return bad
+
+
+def run(n, N, policy, seed=1, gpm=2, seeding="rating", version=2):
     ids = ["p%d" % i for i in range(1, n + 1)]
     ratings = {i: 3000 - 10 * k for k, i in enumerate(ids)}
-    params = {"losses": N, "ko_games": gpm, "seeding": seeding, "bracket": True}
+    params = {"losses": N, "ko_games": gpm, "seeding": seeding, "bracket": version}           # (2: the final ladder, True/1: the first version of the bracket, its final stage depends on the results)
     sched = formats.make_scheduler("elimination", ids, ratings, params, seed)
     games, batches = drive(sched, results(policy, sched.seeds, seed))
-    bad = referee(sched, games, batches, sched.losses)
+    bad = (referee2 if version == 2 else referee)(sched, games, batches, sched.losses)
     again = formats.make_scheduler("elimination", ids, ratings, params, seed)
     for b in range(len(batches)):
         if shape([again.next_batch([g for g in games if g["batch"] < b], b)]) != shape([batches[b]]):
@@ -252,8 +391,28 @@ for N in (1, 2, 3, 4):
             runs += 1
             total += len(games)
             problems += ["n=%d %s: %s" % (n, policy, x) for x in bad]
-    check(not problems, "bracket with %d loss%s, 2..17 engines x 5 result patterns (%d tournaments, %d games): the rules hold, one survivor, a resumed tournament regenerates the same batches%s"
+    check(not problems, "bracket with %d loss%s and the final ladder, 2..17 engines x 5 result patterns (%d tournaments, %d games): the rules hold, one survivor, a resumed tournament regenerates the same batches%s"
           % (N, "" if N == 1 else "es", runs, total, "" if not problems else " - " + "; ".join(problems[:4])))
+
+problems, runs, total = [], 0, 0
+for n in range(2, 18):
+    for policy in ("chalk", "random", "upset"):
+        _, games, _, bad = run(n, 7, policy, seed=n * 3 + runs)
+        runs += 1
+        total += len(games)
+        problems += ["n=%d %s: %s" % (n, policy, x) for x in bad]
+check(not problems, "bracket with 7 losses and the final ladder (more brackets than most fields have players), 2..17 engines x 3 result patterns (%d tournaments, %d games): the rules hold%s"
+      % (runs, total, "" if not problems else " - " + "; ".join(problems[:4])))
+
+for N in (1, 2, 3):                                              # the first version (bracket = True): tournaments that were made with it keep its final stage, which depends on the results
+    problems, runs = [], 0
+    for n in (2, 3, 5, 8, 9, 13, 17):
+        for policy in ("chalk", "upset", "random"):
+            _, games, _, bad = run(n, N, policy, seed=n * 5 + runs, version=1)
+            runs += 1
+            problems += ["n=%d %s: %s" % (n, policy, x) for x in bad]
+    check(not problems, "the first version of the bracket (final stage by losses) with %d loss%s still plays by its rules (%d tournaments)%s"
+          % (N, "" if N == 1 else "es", runs, "" if not problems else " - " + "; ".join(problems[:4])))
 
 problems = []
 for N, n, policy, gpm, seeding in [(5, 9, "random", 2, "rating"), (3, 24, "random", 4, "random"), (2, 33, "random", 2, "list"), (2, 45, "random", 2, "rating"), (5, 6, "random", 2, "rating"),
@@ -289,7 +448,7 @@ for n in range(2, 18):
     ratings = {i: 3000 - 10 * k for k, i in enumerate(ids)}
     for policy in ("random", "draws", "upset"):
         ko = formats.make_scheduler("knockout", ids, ratings, {"ko_games": 2}, 5)
-        el = formats.make_scheduler("elimination", ids, ratings, {"losses": 1, "ko_games": 2, "bracket": True}, 5)
+        el = formats.make_scheduler("elimination", ids, ratings, {"losses": 1, "ko_games": 2, "bracket": 2}, 5)
         fn = by_player(policy, ko.seeds, 3)
         g1, b1 = drive(ko, fn)
         g2, b2 = drive(el, fn)
@@ -334,6 +493,45 @@ check(len(f) == 2 and f[0]["a"] == "p1" and f[0]["b"] == "p2" and f[0]["winner"]
 sched3 = formats.make_scheduler("elimination", ids[:5], ratings, {"losses": 3, "bracket": True}, 1)
 games3, batches3 = drive(sched3, results("upset", sched3.seeds, 1))
 check(not referee(sched3, games3, batches3, 3) and sched3.structure(games3)["champion"] == "p5", "triple elimination of 5, the worse seed always wins: the rules hold, champion p5 (%d games)" % len(games3))
+
+# ------------------------------------------------------------------------------------------------------------ the final ladder: the grand final, a ladder of single matches, rounds in progress
+def make2(n=8, N=2):
+    ids2 = ["p%d" % i for i in range(1, n + 1)]
+    return formats.make_scheduler("elimination", ids2, {i: 3000 - k for k, i in enumerate(ids2)}, {"losses": N, "bracket": 2}, 1)
+
+
+sched = make2()
+games, batches = drive(sched, results("chalk", sched.seeds, 1))
+st = sched.structure(games)
+f = st["final"]
+check(st["ladder"] and st["champion"] == "p1" and len(f) == 1 and (f[0]["a"], f[0]["b"], f[0]["la"], f[0]["lb"]) == ("p2", "p1", 1, 0) and len(games) == 14 * 2 and not referee2(sched, games, batches, 2),
+      "double elimination of 8 with the ladder, the better seed always wins: 14 matches (13 + the grand final), champion p1 without a loss")
+sched = make2()
+rank2 = {s: k for k, s in enumerate(sched.seeds)}
+chalk2 = results("chalk", sched.seeds, 1)
+last2 = len(batches) - 1
+games, batches = drive(sched, lambda w, b, batch, g: chalk2(w, b, batch, g) if batch < last2 else ("1-0" if rank2[w] > rank2[b] else "0-1"))
+st = sched.structure(games)
+check(len(st["final"]) == 1 and st["final"][0]["winner"] == "p2" and st["champion"] == "p2" and st["loss"]["p2"] == 1 and st["loss"]["p1"] == 1 and len(games) == 14 * 2 and not referee2(sched, games, batches, 2),
+      "the champion of the losers bracket wins the grand final: that is the end, there is no deciding match (p2 is the champion with one loss, %d games)" % len(games))
+sched3 = make2(5, 3)
+games3, batches3 = drive(sched3, results("upset", sched3.seeds, 1))
+check(not referee2(sched3, games3, batches3, 3), "triple elimination of 5 with the ladder, the worse seed always wins: the rules hold (%d games, champion %s)" % (len(games3), sched3.structure(games3)["champion"]))
+sched = make2()
+st0 = sched.structure([])
+check(st0["ladder"] and st0["champion"] is None and len(st0["final"]) == 1 and st0["final"][0]["s"] == [["W", 13], ["W", 9]] and st0["final"][0]["a"] is None and st0["final"][0]["la"] is None and st0["final"][0]["fk"] == [1, 0],
+      "nothing played yet: the grand final is drawn with its places (winner of #13, winner of #9)")
+sched = make2(8, 3)
+g_all, b_all = drive(sched, results("chalk", sched.seeds, 1))
+nb3 = len(sched.bracket.steps) - len(sched.bracket.ladder)
+stp = sched.structure([g for g in g_all if g["batch"] < nb3])                                 # (the matches of the brackets are done, the ladder has not begun: one batch per step with these results)
+f0, f1 = stp["final"]
+check(f0["a"] is not None and f0["b"] is not None and (f0["la"], f0["lb"]) == (2, 1) and not f0["done"] and f1["a"] is None and f1["b"] == "p1" and f1["la"] is None and f1["lb"] is None and stp["champion"] is None,
+      "all brackets decided, the ladder not begun: its first match has both players (2 and 1 losses), the second has the winners bracket champion and the place of the winner of the first")
+stq = sched.structure([g for g in g_all if g["batch"] < nb3 + 1])
+w1 = stq["final"][0]["winner"]
+check(stq["final"][0]["done"] and w1 is not None and stq["final"][1]["a"] == w1 and (stq["final"][1]["la"], stq["final"][1]["lb"]) == (stq["loss"][w1], 0) and len(stq["out"]) == 8 - 3 + 1 and not stq["final"][1]["done"],
+      "the first match of the ladder is done: its loser is out (6 of 8 are out), its winner is in the second match")
 
 # ------------------------------------------------------------------------------------------------------------------- rounds in progress (the drawing)
 sched = make()

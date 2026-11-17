@@ -11,7 +11,11 @@ Losers bracket k (k = 1 .. N-1): every round of bracket k-1 sends its losers, as
     * after the last batch the survivors play each other until one is left: the champion of bracket k.
 For k = 1 this is exactly the losers bracket of a double elimination (2m-2 rounds: p/4, p/4, p/8, p/8, ... 1, 1 matches); for k >= 2 it is the same rule one level down.
 A player who loses in bracket k has k+1 losses and goes down to bracket k+1 (he is out when that is bracket N). The champions of the brackets (champion of bracket k has k losses) meet in the final
-stage, which depends on the results and is handled by the scheduler (the two players with the most losses play each other until one player is left: the classic grand final and its reset for N = 2).
+stage. Two versions of it exist (a tournament keeps the one it was made with):
+    * ladder=True (tournaments made now): the final stage is a ladder of single matches that is part of the fixed bracket - the champion of the bottom bracket against the champion of the second
+      bottom bracket, the winner against the champion of the third, and so on up to the winners bracket; the loser of each of these matches is out;
+    * ladder=False (the first version of the bracket): the final stage depends on the results and is handled by the scheduler (the two players with the most losses play each other until one player is
+      left: the classic grand final and its reset for N = 2).
 """
 
 
@@ -25,11 +29,12 @@ def seed_positions(p):
 
 
 class BMatch:
-    """One place of the bracket. kind: 'real' (two players), 'bye' (one: he goes on), 'empty' (nobody). typ: 'wb', 'in' (internal round), 'mg' (merge round)."""
-    __slots__ = ("id", "k", "rnd", "pos", "src", "kind", "typ", "step", "no", "y", "feed")
+    """One place of the bracket. kind: 'real' (two players), 'bye' (one: he goes on), 'empty' (nobody). typ: 'wb', 'in' (internal round), 'mg' (merge round), 'fn' (a match of the final ladder, k = N)."""
+    __slots__ = ("id", "k", "rnd", "pos", "src", "kind", "typ", "step", "no", "y", "feed", "fk")
 
     def __init__(self, mid, k, rnd, pos, src, typ):
         self.id, self.k, self.rnd, self.pos, self.src, self.typ = mid, k, rnd, pos, src, typ
+        self.fk = None                   # a ladder match: the brackets its two places come from (None = the winner of the match before)
         self.kind = "empty"
         self.step = 0                    # the order of play: a real match is played one step after the last of its feeders
         self.no = None                   # match number (real matches, in the order of play)
@@ -52,7 +57,7 @@ def _perm(size, merge_no):
 
 
 class Bracket:
-    def __init__(self, n, losses):
+    def __init__(self, n, losses, ladder=False):
         if n < 2:
             raise ValueError("a bracket needs at least two players")
         self.n, self.losses = n, max(1, int(losses))
@@ -63,12 +68,15 @@ class Bracket:
         self.m = p.bit_length() - 1
         self.matches = []
         self.brackets = []                                # {"k", "rounds": [[match id]], "champion": slot}
+        self.ladder = []                                  # ids of the matches of the final ladder (when ladder=True), in the order of play
         self._canon_cache = {}
         self._build_winners()
         prev = self.brackets[0]["rounds"]
         for k in range(1, self.losses):
             self._build_losers(k, prev)
             prev = self.brackets[k]["rounds"]
+        if ladder:
+            self._build_ladder()
         self._finish()
 
     # ------------------------------------------------------------------------------------------------------------------ building
@@ -132,6 +140,22 @@ class Bracket:
             rounds.append(ids)
         self.brackets.append({"k": k, "rounds": rounds, "champion": surv[0]})
 
+    def _build_ladder(self):
+        """The final stage as a ladder: the champion of the bottom bracket against the champion of the second bottom bracket, the winner against the champion of the third bracket from the bottom, and so
+        on up to the champion of the winners bracket. A bracket with a single player left (nobody to play there) has that player as its champion. The loser of every match of the ladder is out."""
+        champs = [(b["k"], self.canon(b["champion"])) for b in self.brackets]
+        champs = [kc for kc in champs if kc[1] is not None]
+        champs.reverse()                                          # the bottom bracket first
+        prev = None
+        for i in range(1, len(champs)):
+            if prev is None:
+                a, b, fk = champs[0][1], champs[1][1], (champs[0][0], champs[1][0])
+            else:
+                a, b, fk = ("W", prev), champs[i][1], (None, champs[i][0])
+            prev = self._add(self.losses, i - 1, 0, a, b, "fn")
+            self.matches[prev].fk = fk
+            self.ladder.append(prev)
+
     # ------------------------------------------------------------------------------------------------------- what a slot really is
     def canon(self, slot):
         """The slot with the byes taken out: ('S', rank), ('W', real match), ('L', real match), or None when nobody can ever come from there."""
@@ -182,10 +206,11 @@ class Bracket:
             b["rows"] = (max(ys) + 1.0) if ys else 0.0
 
     def counts(self):
-        """Real matches per bracket."""
+        """Real matches per bracket (the matches of the final ladder are not in a bracket)."""
         out = [0] * self.losses
         for i in self.real:
-            out[self.matches[i].k] += 1
+            if self.matches[i].k < self.losses:
+                out[self.matches[i].k] += 1
         return out
 
     def first_final(self):

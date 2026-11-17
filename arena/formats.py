@@ -504,6 +504,7 @@ class _Walk:
         self.tb = {}                        # match id -> tie-break pairs played so far
         self.gids = {}                      # match id -> numbers of its games (the drawing links a match to them)
         self.loss = {s: 0 for s in seeds}
+        self.before = {}                    # match id -> {player: his losses before the match} (the drawing of the final stage shows them)
         self.out = []                       # [{"id", "round"}] in the order of elimination
 
     def who(self, slot):
@@ -517,10 +518,10 @@ class _Walk:
         got = self.res.get(r)
         return None if got is None else got[0 if t == "W" else 1]
 
-    def decide(self, key, winner, loser, rnd, n_out):
+    def decide(self, key, winner, loser, rnd, n_out, force=False):
         self.res[key] = (winner, loser)
         self.loss[loser] += 1
-        if self.loss[loser] >= n_out:
+        if force or self.loss[loser] >= n_out:           # (force: a match of the final ladder, its loser is out whatever his losses)
             self.out.append({"id": loser, "round": rnd})
 
 
@@ -529,8 +530,10 @@ class Elimination(Knockout):
 
     A player is out after `losses` lost matches: 1 = knockout, 2 = double elimination (winners bracket + losers bracket), 3 = triple (+ a second losers bracket) ... Every round of a bracket sends its losers
     down into the next one. The matches of a *step* (a match is played one step after the last match that feeds it) are one batch; a level match gets pairs of tie-break games as in the Knockout.
-    When all brackets are decided, their champions (the champion of bracket k has k losses) meet in the final stage: the two players with the most losses play each other, again and again, until one player
-    is left. For 2 losses that is the grand final of the double elimination and, if the champion of the losers bracket wins it, the deciding match (the 'bracket reset').
+    When all brackets are decided, their champions (the champion of bracket k has k losses) meet in the final stage. Tournaments made now (`bracket` = 2) play a ladder of single matches that is fixed like the
+    rest of the bracket: the champion of the bottom bracket against the champion of the second bottom bracket, the winner against the champion of the third, and so on up to the winners bracket; the loser of
+    each of these matches is out (for 2 losses that is the grand final, one match). The first version of the bracket (`bracket` = True) has a final stage that depends on the results: the two players with the
+    most losses play each other, again and again, until one player is left (for 2 losses the grand final and, if the champion of the losers bracket wins it, the deciding match); such tournaments keep it.
     The tournaments that were made before this bracket existed have no `bracket` parameter in their settings and keep their own schedule (EliminationGroups)."""
     name = "elimination"
 
@@ -542,10 +545,18 @@ class Elimination(Knockout):
             lives = 2
         self.losses = max(1, min(MAX_LOSSES, lives))
         self.rank = {s: i for i, s in enumerate(self.seeds)}
-        self.bracket = Bracket(len(self.seeds), self.losses)
+        try:
+            version = int(params.get("bracket") or 0)
+        except (TypeError, ValueError):
+            version = 1
+        self.ladder = version >= 2                      # bracket = True (1): the first version, its final stage depends on the results; 2: the final stage is a ladder of single matches (fixed, in the bracket)
+        self.bracket = Bracket(len(self.seeds), self.losses, ladder=self.ladder)
 
     def total_games(self):
-        """The least number of games: every player but the champion loses `losses` matches (the champion may lose up to losses-1, and tie-break pairs add games)."""
+        """The least number of games. Ladder: every match of the bracket and of the final ladder is known in advance (tie-break pairs add games). First version: every player but the champion loses `losses`
+        matches (the champion may lose up to losses-1, and tie-break pairs add games)."""
+        if self.ladder:
+            return len(self.bracket.real) * self.games
         return self.losses * (len(self.seeds) - 1) * self.games
 
     # ------------------------------------------------------------------------------------------------------------------ the drawing
@@ -585,18 +596,28 @@ class Elimination(Knockout):
                 rounds.append({"round": r_idx + 1, "matches": ms})
             name = "Winners bracket" if bk["k"] == 0 else ("Losers bracket" if self.losses == 2 else "Losers bracket %d" % bk["k"])
             brackets.append({"k": bk["k"], "name": name, "rows": bk["rows"], "rounds": rounds})
-        first = br.first_final()
-        first_s = [slot_text(first[0]), slot_text(first[1])] if first is not None else [None, None]       # where the players of the first match of the final stage come from
         fin = []
-        for i, f in enumerate(finals):
-            a, b = f["a"], f["b"]
-            sa, sb = points(f["key"], a, b)
-            got = w.res.get(f["key"])
-            fin.append({"no": f["no"], "a": a, "b": b, "sa": sa, "sb": sb, "tb": w.tb.get(f["key"], 0), "winner": got[0] if got else None, "done": got is not None, "s": first_s if i == 0 else [None, None],
-                        "g": w.gids.get(f["key"], []), "la": f["la"], "lb": f["lb"]})
-        if not fin and first is not None:                              # the final stage has not begun: its first match, with the places it is made of
-            fin.append({"no": None, "a": None, "b": None, "sa": 0.0, "sb": 0.0, "tb": 0, "winner": None, "done": False, "s": first_s, "la": None, "lb": None})
-        return {"kind": "bracket", "losses": self.losses, "games": self.games, "p": br.p, "brackets": brackets, "final": fin, "loss": dict(w.loss), "out": list(w.out), "champion": champion}
+        if self.ladder:                                                # the final ladder: fixed matches, each with the places its two players come from
+            for mid in br.ladder:
+                m = br.matches[mid]
+                a, b = w.who(m.src[0]), w.who(m.src[1])
+                sa, sb = points(mid, a, b)
+                got = w.res.get(mid)
+                before = w.before.get(mid, {})
+                fin.append({"id": mid, "no": m.no, "a": a, "b": b, "sa": sa, "sb": sb, "tb": w.tb.get(mid, 0), "winner": got[0] if got else None, "done": got is not None,
+                            "s": [slot_text(m.src[0]), slot_text(m.src[1])], "g": w.gids.get(mid, []), "la": before.get(a), "lb": before.get(b), "fk": list(m.fk)})
+        else:
+            first = br.first_final()
+            first_s = [slot_text(first[0]), slot_text(first[1])] if first is not None else [None, None]       # where the players of the first match of the final stage come from
+            for i, f in enumerate(finals):
+                a, b = f["a"], f["b"]
+                sa, sb = points(f["key"], a, b)
+                got = w.res.get(f["key"])
+                fin.append({"no": f["no"], "a": a, "b": b, "sa": sa, "sb": sb, "tb": w.tb.get(f["key"], 0), "winner": got[0] if got else None, "done": got is not None, "s": first_s if i == 0 else [None, None],
+                            "g": w.gids.get(f["key"], []), "la": f["la"], "lb": f["lb"]})
+            if not fin and first is not None:                          # the final stage has not begun: its first match, with the places it is made of
+                fin.append({"no": None, "a": None, "b": None, "sa": 0.0, "sb": 0.0, "tb": 0, "winner": None, "done": False, "s": first_s, "la": None, "lb": None})
+        return {"kind": "bracket", "ladder": self.ladder, "losses": self.losses, "games": self.games, "p": br.p, "brackets": brackets, "final": fin, "loss": dict(w.loss), "out": list(w.out), "champion": champion}
 
     # ------------------------------------------------------------------------------------------------------------------ the walk
     def _walk(self, done, batch_no, ui=False):
@@ -605,6 +626,7 @@ class Elimination(Knockout):
         for g in done:
             by_batch.setdefault(g.get("batch"), []).append(g)
         br, rank, n_out = self.bracket, self.rank, self.losses
+        ladder = set(br.ladder)                                                # (the matches of the final ladder: their loser is out)
         w = _Walk(br, self.seeds)
         b = 0
 
@@ -638,7 +660,7 @@ class Elimination(Knockout):
                         nxt[i] = (key, x, y)                                       # still being played
                     elif sx != sy or level >= TIEBREAK_LEVELS:
                         win = x if (sx > sy or (sx == sy and rank[x] < rank[y])) else y
-                        w.decide(key, win, y if win == x else x, rnd, n_out)      # (decided matches of a round in progress count at once)
+                        w.decide(key, win, y if win == x else x, rnd, n_out, force=key in ladder)      # (decided matches of a round in progress count at once)
                     else:
                         nxt[i] = (key, x, y)
                 if unfinished:
@@ -661,12 +683,16 @@ class Elimination(Knockout):
                 pend[idx] = (mid, x, y)
                 w.pts[mid] = {pa: 0.0, pb: 0.0}
                 w.tb[mid] = 0
+                w.before[mid] = {pa: w.loss[pa], pb: w.loss[pb]}
             what, val = play(pend, rnd)
             if what == "batch":
                 return val, None
             if what == "partial":
                 return None, self._payload(w, [], None, rnd)
-        finals = []                                                            # the final stage: the two players with the most losses play each other until one player is left
+        if self.ladder:                                                        # everything is decided: the winner of the last match of the ladder (of the winners bracket when there is no ladder)
+            top = ("W", br.ladder[-1]) if br.ladder else br.brackets[0]["champion"]
+            return None, self._payload(w, [], w.who(top), rnd)
+        finals = []                                                            # the final stage (first version): the two players with the most losses play each other until one player is left
         guard = 4 * n_out * n_out + 10
         no = len(br.real)
         while True:

@@ -39,7 +39,10 @@
     if (S.format === 'gauntlet') return (n - 1) * S.games * S.rounds;
     if (S.format === 'swiss') return S.swiss_rounds * Math.floor(n / 2) * S.games;
     const perMatch = S.ko_games % 2 ? S.ko_games + 1 : S.ko_games;
-    if (S.format === 'elimination') return Math.max(1, Math.min(10, Math.round(S.losses) || 1)) * (n - 1) * perMatch;          // at least: everybody but the champion loses that many matches
+    if (S.format === 'elimination') {          // bracket k has n-1-k matches, then the champions of the min(losses, n) brackets play one match less than that (tie-breaks come on top)
+      const L = Math.max(1, Math.min(10, Math.round(S.losses) || 1)), K = Math.min(L, n);
+      return (K * (n - 1) - K * (K - 1) / 2 + K - 1) * perMatch;
+    }
     return (n - 1) * perMatch;
   }
   function gameSeconds(tc) {           // rough average wall time of one game
@@ -417,8 +420,8 @@
     const place = (s) => (s ? (s[0] === 'W' ? 'Winner of #' + s[1] : s[0] === 'L' ? 'Loser of #' + s[1] : 'Seed ' + (s[1] + 1)) : 'bye');
     const lossTag = (id, lo) => {      // final stage: the losses of a player before the match (they are what makes these two meet), in bold when one more loss puts the player out
       if (lo === undefined || lo === null) return null;
-      const last = lo === st.losses - 1;
-      return h('span', { class: 'ls' + (last ? ' last' : ''), title: nm(id) + ': ' + lossTxt(lo) + ' before this match (out at ' + st.losses + ')' + (last ? ' - one more loss and it is out' : '') }, lossTxt(lo));
+      const last = !st.ladder && lo === st.losses - 1;
+      return h('span', { class: 'ls' + (last ? ' last' : ''), title: nm(id) + ': ' + lossTxt(lo) + ' before this match' + (st.ladder ? ' - the loser of this match is out' : ' (out at ' + st.losses + ')' + (last ? ' - one more loss and it is out' : '')) }, lossTxt(lo));
     };
     const row = (m, i) => {            // one player of a match, or where he will come from
       const id = i === 0 ? m.a : m.b, sc = i === 0 ? m.sa : m.sb;
@@ -437,7 +440,7 @@
       bk.rounds.forEach((rd, ri) => els.push(h('div', { class: 'ch', style: 'left:' + (BK.pad + ri * (BK.w + BK.colGap)) + 'px;top:' + (base - 14) + 'px;width:' + BK.w + 'px' }, 'Round ' + rd.round)));
       bk.rounds.forEach((rd) => rd.matches.forEach((m) => {
         const x = BK.pad + m.x * (BK.w + BK.colGap), cy = base + BK.top + m.y * BK.rowH + BK.h / 2, hh = m.kind === 'bye' ? BK.hb : BK.h;
-        pos.set(m.id, { x, cy });
+        pos.set(m.id, { x, cy, w: BK.w });
         els.push(box(m, x, cy - hh / 2, hh));
       }));
       y = base + BK.top + bk.rows * BK.rowH + 22;
@@ -452,25 +455,53 @@
     const fx = BK.pad + cols * (BK.w + BK.colGap) + 6;            // the final stage and the champion: at the right of the widest bracket, level with the winners final
     const wb = st.brackets[0].rounds[st.brackets[0].rounds.length - 1].matches[0];
     let fy = wb ? pos.get(wb.id).cy - BK.h / 2 : BK.pad + 50;
-    els.push(h('div', { class: 'bt', style: 'left:' + fx + 'px;top:' + (fy - 44) + 'px' }, 'Final'));
+    let wMax = fx + BK.fw + BK.pad;
+    if (!st.ladder) els.push(h('div', { class: 'bt', style: 'left:' + fx + 'px;top:' + (fy - 44) + 'px' }, 'Final'));
     const byNo = new Map();            // match number -> its place in the drawing (the lines to the first match of the final stage start there)
     st.brackets.forEach((bk) => bk.rounds.forEach((rd) => rd.matches.forEach((m) => { if (m.no) byNo.set(m.no, pos.get(m.id)); })));
-    st.final.forEach((f, i) => {
+    const bn = (k) => (k === 0 ? 'winners bracket' : 'bracket ' + k);
+    const ladderText = () => {
+      const fk = (st.final[0] && st.final[0].fk) || [];
+      if (st.final.length === 1) return st.losses === 2 ? 'Grand final: the champion of the winners bracket against the champion of the losers bracket, one match; the loser is out.' : 'Final: ' + bn(fk[0]) + ' against ' + bn(fk[1]) + ', one match; the loser is out.';
+      return 'Final stage: the champions of the brackets meet one after the other, the bottom bracket first: ' + bn(fk[0]) + ' against ' + bn(fk[1]) + ', the winner against the next bracket up, and so on up to the winners bracket. '
+        + 'The loser of each of these matches is out, whatever its losses. The losses behind a name are those before that match.';
+    };
+    if (st.ladder) {                   // the final ladder: one column of boxes for every match, going up to the right; a box is level with the middle of its two places, the lines come from these places
+      const colX = (i) => fx + i * (BK.fw + BK.colGap);
+      if (st.final.length) els.push(h('div', { class: 'bt', style: 'left:' + fx + 'px;top:' + BK.pad + 'px' }, 'Final stage'));
+      st.final.forEach((f, i) => {
+        const x = colX(i), srcs = (f.s || []).map((sl) => sl && byNo.get(sl[1])).filter(Boolean), fk = f.fk || [];
+        const cy = srcs.length ? srcs.reduce((t, p) => t + p.cy, 0) / srcs.length : fy + BK.h / 2;
+        srcs.forEach((p) => segs.push('M' + (p.x + p.w) + ' ' + p.cy + 'H' + (x - BK.colGap / 2) + 'V' + cy + 'H' + x));
+        els.push(h('div', { class: 'ch', style: 'left:' + x + 'px;top:' + (cy - BK.h / 2 - 30) + 'px;width:' + BK.fw + 'px' }, st.losses === 2 ? 'Grand final' : 'Final ' + (i + 1) + ': ' + (fk[0] === null ? 'winner' : bn(fk[0])) + ' vs ' + bn(fk[1])));
+        els.push(box({ kind: 'real', a: f.a, b: f.b, sa: f.sa, sb: f.sb, tb: f.tb, winner: f.winner, done: f.done, s: f.s, no: f.no, g: f.g, la: f.la, lb: f.lb }, x, cy - BK.h / 2, BK.h, BK.fw));
+        byNo.set(f.no, { x, cy, w: BK.fw });
+      });
+      const lastP = st.final.length ? byNo.get(st.final[st.final.length - 1].no) : (wb ? pos.get(wb.id) : null);          // the champion: right of the last match (of the winners final when there is no ladder)
+      if (lastP) {
+        const cx = lastP.x + lastP.w + BK.colGap;
+        segs.push('M' + (lastP.x + lastP.w) + ' ' + lastP.cy + 'H' + cx);
+        if (st.champion) els.push(h('div', { class: 'mb champ', style: 'left:' + cx + 'px;top:' + (lastP.cy - BK.h / 2) + 'px;height:' + BK.h + 'px;width:' + BK.fw + 'px' }, h('div', { class: 'r win' }, h('span', { class: 'nm', title: nm(st.champion) }, nm(st.champion))), h('div', { class: 'r' }, h('span', { class: 'nm muted' }, 'Champion, ' + lossTxt(st.loss[st.champion])))));
+        wMax = Math.max(wMax, cx + BK.fw + BK.pad);
+      }
+    }
+    (st.ladder ? [] : st.final).forEach((f, i) => {
       const m = { kind: 'real', a: f.a, b: f.b, sa: f.sa, sb: f.sb, tb: f.tb, winner: f.winner, done: f.done, s: f.s, no: f.no, g: f.g, la: f.la, lb: f.lb };
       if (i === 0) (f.s || []).forEach((sl) => { const a = sl && byNo.get(sl[1]); if (a) segs.push('M' + (a.x + BK.w) + ' ' + a.cy + 'H' + (fx - BK.colGap / 2) + 'V' + (fy + BK.h / 2) + 'H' + fx); });
       els.push(h('div', { class: 'ch', style: 'left:' + fx + 'px;top:' + (fy - 30) + 'px;width:' + BK.fw + 'px' }, st.losses === 2 ? (i === 0 ? 'Grand final' : 'Deciding match') : 'Final ' + (i + 1)));
       els.push(box(m, fx, fy, BK.h, BK.fw));
       fy += BK.rowH + 22;
     });
-    if (st.champion) els.push(h('div', { class: 'mb champ', style: 'left:' + fx + 'px;top:' + (fy + 6) + 'px;height:' + BK.h + 'px;width:' + BK.fw + 'px' }, h('div', { class: 'r win' }, h('span', { class: 'nm', title: nm(st.champion) }, nm(st.champion))), h('div', { class: 'r' }, h('span', { class: 'nm muted' }, 'Champion, ' + lossTxt(st.loss[st.champion])))));
-    const W = fx + BK.fw + BK.pad, H = Math.max(y, fy + BK.h + 30);
+    if (st.champion && !st.ladder) els.push(h('div', { class: 'mb champ', style: 'left:' + fx + 'px;top:' + (fy + 6) + 'px;height:' + BK.h + 'px;width:' + BK.fw + 'px' }, h('div', { class: 'r win' }, h('span', { class: 'nm', title: nm(st.champion) }, nm(st.champion))), h('div', { class: 'r' }, h('span', { class: 'nm muted' }, 'Champion, ' + lossTxt(st.loss[st.champion])))));
+    const W = wMax, H = Math.max(y, fy + BK.h + 30);
     const lines = [];
     for (let k = 0; k < st.losses; k++) {            // how many players are in with how many losses (the names only when there are few)
       const ids = T.snap.cfg.engine_ids.filter((id) => st.loss[id] === k && !st.out.some((o) => o.id === id));
       if (ids.length) lines.push(h('div', {}, h('b', {}, lossTxt(k) + ' (' + ids.length + ')'), ids.length <= 8 ? [': ', ids.map((id) => nm(id)).join(', ')] : null));
     }
     if (st.out.length) lines.push(h('div', { class: 'muted' }, 'Out (' + st.out.length + ')'));
-    if (st.losses >= 2) lines.push(h('div', { class: 'muted' }, st.losses === 2 ? 'Grand final: the two champions meet; if the champion of the losers bracket wins it, both have one loss and the deciding match follows.'
+    if (st.ladder) { if (st.final.length) lines.push(h('div', { class: 'muted' }, ladderText())); }
+    else if (st.losses >= 2) lines.push(h('div', { class: 'muted' }, st.losses === 2 ? 'Grand final: the two champions meet; if the champion of the losers bracket wins it, both have one loss and the deciding match follows.'
       : 'Final stage: the two players with the most losses play each other, again and again, until one of them is out (' + st.losses + ' losses). The losses behind a name are those before that match.'));
     standBody.appendChild(h('div', { class: 'help', style: 'padding:2px 2px 8px' }, lines));
     standBody.appendChild(h('div', { class: 'brk', style: 'width:' + W + 'px;height:' + H + 'px' }, svg('svg', { width: W, height: H }, svg('path', { d: segs.join(''), fill: 'none', stroke: '#8a8a8a', 'stroke-width': 1 })), els));

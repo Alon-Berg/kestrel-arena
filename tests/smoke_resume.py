@@ -109,8 +109,8 @@ keys = [g["key"] for g in t7.games]
 matches = sum(1 for bk in sx["brackets"] for rnd in bk["rounds"] for m in rnd["matches"] if m["kind"] == "real") + len(sx["final"])
 champ = sx["champion"]
 check(t7.status == "finished" and champ in ids and len(set(keys)) == len(keys), "elimination resumed to the end: %s, %d games, champion %s" % (t7.status, len(t7.games), champ))
-check(sx["loss"][champ] < 2 and all(sx["loss"][i] == 2 for i in ids if i != champ) and len(sx["out"]) == 4 and matches == 2 * 4 + sx["loss"][champ] and len(t7.games) >= 2 * matches,
-      "elimination: the champion has %d losses, the other four 2, %d matches, %d games" % (sx["loss"][champ], matches, len(t7.games)))
+check(sx["ladder"] and sx["loss"][champ] < 2 and sum(1 for i in ids if i != champ and sx["loss"][i] == 2) >= 3 and all(sx["loss"][i] >= 1 for i in ids if i != champ) and len(sx["out"]) == 4 and matches == 8
+      and len(t7.games) >= 2 * matches, "elimination: the champion has %d losses, the other four are out (the loser of the grand final may have 1 loss), %d matches (4 + 3 + the grand final), %d games" % (sx["loss"][champ], matches, len(t7.games)))
 check(t7.pgn_text().count("[Event ") == len(t7.games), "elimination: PGN has every game")
 lst = [x for x in st7.tournaments.list() if x["id"] == t6.id][0]
 check(lst["format"] == "elimination" and lst["losses"] == 2 and lst["status"] == "finished", "elimination: the saved list knows the format and the number of losses")

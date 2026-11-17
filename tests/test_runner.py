@@ -67,7 +67,7 @@ def wait(t, secs=120):
 
 # ----------------------------------------------------------------------------------------------------------------- the API accepts the new format
 cfg = build_tournament_cfg(st, dict(common, name="e", format="elimination", engines=ids, losses=3, ko_games=2))
-check(cfg["format"] == "elimination" and cfg["params"]["losses"] == 3 and cfg["params"]["bracket"] is True, "the API stores an elimination with 3 losses as a bracket")
+check(cfg["format"] == "elimination" and cfg["params"]["losses"] == 3 and cfg["params"]["bracket"] == 2, "the API stores an elimination with 3 losses as a bracket with the final ladder")
 check(build_tournament_cfg(st, dict(common, format="elimination", engines=ids, losses=99))["params"]["losses"] == 10
       and build_tournament_cfg(st, dict(common, format="elimination", engines=ids, losses=0))["params"]["losses"] == 1
       and build_tournament_cfg(st, dict(common, format="elimination", engines=ids))["params"]["losses"] == 2, "losses are limited to 1..10, the default is 2")

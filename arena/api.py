@@ -130,6 +130,8 @@ def build_tournament_cfg(st, p):
               "swiss_rounds": _num(p.get("swiss_rounds"), 5, 1, 50, True), "ko_games": _num(p.get("ko_games"), 2, 2, 1000, True),
               "seeding": p.get("seeding") if p.get("seeding") in ("rating", "random", "list") else "rating",
               "losses": _num(p.get("losses"), 2, 1, MAX_LOSSES, True)}
+    if fmt == "elimination":
+        params["bracket"] = True                          # the actual bracket (arena/bracket.py); tournaments made before it existed have no such parameter and keep their schedule
     op = p.get("openings") or {}
     cfg = {"name": (p.get("name") or "").strip() or "Tournament %s" % time.strftime("%d %b %H:%M"), "format": fmt, "engine_ids": ids, "engines": specs, "params": params,
            "tc": tc, "hash": _num(p.get("hash"), 64, 1, 65536, True), "threads": _num(p.get("threads"), 1, 1, 128, True), "margin_ms": _num(p.get("margin_ms"), 600, 0, 10000, True),

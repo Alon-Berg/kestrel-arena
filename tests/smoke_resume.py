@@ -97,13 +97,13 @@ check(t6.status == "stopped" and 5 <= n_stop < 30, "elimination stopped after %d
 st7 = AppState()
 st7.tournaments.root = tdir
 t7 = st7.tournaments.load(t6.id)
-check(len(t7.games) == n_stop and t7.status == "stopped" and t7.snapshot()["structure"]["kind"] == "elimination", "elimination reloaded: %d games, the bracket is rebuilt from them" % len(t7.games))
+check(len(t7.games) == n_stop and t7.status == "stopped" and t7.snapshot()["structure"]["kind"] == "bracket", "elimination reloaded: %d games, the bracket is rebuilt from them" % len(t7.games))
 t7.start()
 wait(t7)
 snap = t7.snapshot()
 sx = snap["structure"]
 keys = [g["key"] for g in t7.games]
-matches = sum(1 for r in sx["rounds"] for m in r["matches"] if not m["bye"])
+matches = sum(1 for bk in sx["brackets"] for rnd in bk["rounds"] for m in rnd["matches"] if m["kind"] == "real") + len(sx["final"])
 champ = sx["champion"]
 check(t7.status == "finished" and champ in ids and len(set(keys)) == len(keys), "elimination resumed to the end: %s, %d games, champion %s" % (t7.status, len(t7.games), champ))
 check(sx["loss"][champ] < 2 and all(sx["loss"][i] == 2 for i in ids if i != champ) and len(sx["out"]) == 4 and matches == 2 * 4 + sx["loss"][champ] and len(t7.games) >= 2 * matches,

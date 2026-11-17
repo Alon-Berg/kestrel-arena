@@ -67,7 +67,7 @@ def wait(t, secs=120):
 
 # ----------------------------------------------------------------------------------------------------------------- the API accepts the new format
 cfg = build_tournament_cfg(st, dict(common, name="e", format="elimination", engines=ids, losses=3, ko_games=2))
-check(cfg["format"] == "elimination" and cfg["params"]["losses"] == 3, "the API stores an elimination with 3 losses")
+check(cfg["format"] == "elimination" and cfg["params"]["losses"] == 3 and cfg["params"]["bracket"] is True, "the API stores an elimination with 3 losses as a bracket")
 check(build_tournament_cfg(st, dict(common, format="elimination", engines=ids, losses=99))["params"]["losses"] == 10
       and build_tournament_cfg(st, dict(common, format="elimination", engines=ids, losses=0))["params"]["losses"] == 1
       and build_tournament_cfg(st, dict(common, format="elimination", engines=ids))["params"]["losses"] == 2, "losses are limited to 1..10, the default is 2")
@@ -143,13 +143,15 @@ st2 = AppState()
 st2.registry.settings["engines"] = st.registry.settings["engines"]
 st2.tournaments.root = st.tournaments.root
 t2 = st2.tournaments.load(t.id)
-check(t.status == "stopped" and len(t2.games) == n_stop and t2.snapshot()["structure"]["kind"] == "elimination", "an elimination stopped after %d games is loaded again with its bracket" % n_stop)
+check(t.status == "stopped" and len(t2.games) == n_stop and t2.snapshot()["structure"]["kind"] == "bracket", "an elimination stopped after %d games is loaded again with its bracket" % n_stop)
 t2.start()
 wait(t2)
 sx = t2.snapshot()["structure"]
-matches = sum(1 for r in sx["rounds"] for m in r["matches"] if not m["bye"])
+matches = sum(1 for bk in sx["brackets"] for rnd in bk["rounds"] for m in rnd["matches"] if m["kind"] == "real") + len(sx["final"])
 check(t2.status == "finished" and sx["champion"] == "f0" and sx["loss"]["f0"] == 0 and all(sx["loss"]["f%d" % i] == 2 for i in range(1, 6)) and matches == 10 and len(t2.games) == 20
       and len({g["key"] for g in t2.games}) == 20, "...and resumed to the end: champion %s with %d losses, %d matches, %d games" % (sx["champion"], sx["loss"].get(sx["champion"], -1), matches, len(t2.games)))
+listed = sum(len(m["g"]) for bk in sx["brackets"] for rnd in bk["rounds"] for m in rnd["matches"] if m["kind"] == "real") + sum(len(f["g"]) for f in sx["final"])
+check(listed == len(t2.games) == 20, "...every game of the tournament is linked to its match in the drawing (%d of %d)" % (listed, len(t2.games)))
 gamemod.play_game = orig
 st2.shutdown()
 

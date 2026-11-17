@@ -121,5 +121,15 @@ svg.board { display: block; border: 1px solid #555; }
 .bracket.elim .rnd { justify-content: flex-start; gap: 6px; } .bracket .grp { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; } .bracket .grp .cap { font-size: 11px; color: var(--muted); border-bottom: 1px solid var(--line2); }
 .bracket .match .lv { color: var(--muted); font-weight: 400; }
 .tbl tr.off td { color: var(--muted); }
+/* the elimination bracket as a tree */
+.grid-run.wide { grid-template-columns: minmax(0, 1fr); }
+.brk { position: relative; direction: ltr; } .brk svg { position: absolute; left: 0; top: 0; pointer-events: none; }
+.brk .mb { position: absolute; box-sizing: border-box; width: 176px; background: #fff; border: 1px solid #888; font-size: 12px; } .brk .mb.live { border-color: #000; box-shadow: 0 0 0 1px #000; } .brk .mb.champ { border: 2px solid #000; }
+.brk .mb .r { display: flex; justify-content: space-between; gap: 6px; padding: 0 5px; height: 20px; line-height: 19px; white-space: nowrap; } .brk .mb .r + .r { border-top: 1px solid var(--line2); }
+.brk .mb .r.win { font-weight: 700; background: #ececec; } .brk .mb .r .nm { overflow: hidden; text-overflow: ellipsis; } .brk .mb .ph { color: var(--muted); font-style: italic; font-weight: 400; }
+.brk .mb.bye { background: transparent; border: 1px dashed #aaa; } .brk .mb.bye .r { height: 20px; } .brk .mb .bye-tag { position: absolute; right: 5px; top: 0; line-height: 19px; font-size: 11px; color: var(--muted); }
+.brk .mb .no { position: absolute; left: 0; top: -12px; font-size: 10px; line-height: 10px; color: var(--muted); }
+.brk .mb.clk { cursor: pointer; } .brk .mb.clk:hover { background: var(--hover); }
+.brk .bt { position: absolute; font-weight: 700; font-size: 13px; white-space: nowrap; } .brk .ch { position: absolute; font-size: 11px; color: var(--muted); }
 .xt td, .xt th { text-align: center; min-width: 34px; padding: 1px 3px; font-size: 12px; } .xt td.s1 { background: #e6e6e6 !important; font-weight: 600; } .xt td.s0 { background: #fff !important; } .xt td.sh { background: #f4f4f4 !important; } .xt td.self { background: #cfcfcf !important; }
 @media (max-width: 1180px) { .grid-setup, .grid-run { grid-template-columns: 1fr; } }

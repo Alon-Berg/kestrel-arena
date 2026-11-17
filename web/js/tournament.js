@@ -5,7 +5,7 @@
 
   // ======================================================================================================== state
   const DEFAULT_S = {
-    name: '', format: 'roundrobin', games: 2, rounds: 1, hero: '', swiss_rounds: 5, ko_games: 2, seeding: 'rating', losses: 2, showOff: false,
+    name: '', format: 'roundrobin', games: 2, rounds: 1, hero: '', swiss_rounds: 5, ko_games: 2, seeding: 'rating', losses: 2, showOff: false, wideBracket: true,
     tcMode: 'time', base: 10, inc: 0.1, movetime: 100, nodes: 20000, depth: 10,
     hash: 64, threads: 1, concurrency: 2, margin_ms: 600, overhead_ms: 'auto', priority: 'above', seed: 1, v: 2,
     openings: { source: 'builtin', path: '', order: 'random' },
@@ -277,12 +277,14 @@
       h('div', { class: 'row', style: 'flex-wrap:nowrap;gap:12px;margin-top:10px' }, h('div', { style: 'flex:1' }, hdr.prog), hdr.progText, hdr.time));
     standBody = h('div', { class: 'scroll', style: 'max-height:calc(100vh - 330px)' });
     tabBtns = h('div', { class: 'seg' });
-    standEl = h('div', { class: 'card' }, h('div', { class: 'h' }, tabBtns), standBody);
+    hdr.wide = h('span', { class: 'hidden' }, chk(S, 'wideBracket', 'full width', () => { applyWide(); renderStandings(); }));
+    standEl = h('div', { class: 'card' }, h('div', { class: 'h' }, tabBtns, h('span', { class: 'spacer' }), hdr.wide), standBody);
     liveEl = h('div', { class: 'card' });
     viewerEl = h('div', { class: 'card hidden' });
     listSel = h('select', { class: 'select', style: 'width:auto;min-width:150px', onchange: (e) => { T.filter = e.target.value; renderList(); } });
     listEl = h('div', { class: 'card' });
-    runEl = h('div', { style: 'max-width:1500px;margin:0 auto' }, head, h('div', { class: 'grid-run', style: 'margin-top:14px' }, h('div', {}, standEl), h('div', {}, liveEl, viewerEl, listEl)));
+    hdr.grid = h('div', { class: 'grid-run', style: 'margin-top:14px' }, h('div', {}, standEl), h('div', {}, liveEl, viewerEl, listEl));
+    runEl = h('div', { style: 'max-width:1500px;margin:0 auto' }, head, hdr.grid);
     cards = new Map(); viewerBoard = null;
   }
 
@@ -350,6 +352,7 @@
 
   function renderStandings() {
     A.clear(standBody);
+    applyWide();
     if (T.tab === 'bracket') return renderBracket();
     const res = currentStandings();
     if (T.tab === 'crosstable') return renderCross(res);
@@ -391,7 +394,7 @@
   // ---- elimination (N losses): loss counts, order and bracket ----------------------------------------------------------
   function elimInfo() {            // null unless the tournament is an elimination whose structure has arrived
     const st = T.structure;
-    if (!T.snap || T.snap.cfg.format !== 'elimination' || !st || st.kind !== 'elimination') return null;
+    if (!T.snap || T.snap.cfg.format !== 'elimination' || !st || (st.kind !== 'elimination' && st.kind !== 'bracket')) return null;
     const out = {};
     st.out.forEach((o, i) => { out[o.id] = { round: o.round, order: i }; });
     return { st, out, losses: st.losses };
@@ -403,6 +406,76 @@
   }
   const elimStatus = (el, r) => (r.id === el.st.champion ? 'champion' : el.out[r.id] ? 'out in round ' + el.out[r.id].round : 'alive');
   const lossTxt = (n) => n + (n === 1 ? ' loss' : ' losses');
+
+  // ---- the elimination bracket as a tree: a box for every match at its place, lines from the matches that feed it ----------------------------------
+  const BK = { w: 176, h: 42, hb: 22, colGap: 30, rowH: 54, pad: 8, top: 14 };
+
+  function renderBracketTree(st) {
+    const nm = (id) => T.names[id];
+    const live = new Set();            // the matches that are being played now
+    T.active.forEach((g) => { live.add(g.white + '|' + g.black); live.add(g.black + '|' + g.white); });
+    const place = (s) => (s ? (s[0] === 'W' ? 'Winner of #' + s[1] : s[0] === 'L' ? 'Loser of #' + s[1] : 'Seed ' + (s[1] + 1)) : 'bye');
+    const row = (m, i) => {            // one player of a match, or where he will come from
+      const id = i === 0 ? m.a : m.b, sc = i === 0 ? m.sa : m.sb;
+      if (id) return h('div', { class: 'r' + (m.winner && m.winner === id ? ' win' : '') }, h('span', { class: 'nm', title: nm(id) }, nm(id)), m.kind === 'real' && (m.done || sc || m.tb) ? h('span', { class: 'mono' }, fmt.pts(sc)) : null);
+      return h('div', { class: 'r ph' }, h('span', { class: 'nm' }, place(m.s[i])));
+    };
+    const box = (m, x, y, hh) => h('div', { class: 'mb' + (m.kind === 'bye' ? ' bye' : '') + (m.kind === 'real' && !m.done && m.a && m.b && live.has(m.a + '|' + m.b) ? ' live' : '') + (m.g && m.g.length ? ' clk' : ''), onclick: m.g && m.g.length ? () => selectFinished(m.g[0]) : null, style: 'left:' + x + 'px;top:' + y + 'px;height:' + hh + 'px',
+      title: (m.no ? 'Match #' + m.no : '') + (m.g && m.g.length ? ' - click to replay its first game' : '') + (m.tb ? ' - ' + m.tb + ' extra pair' + (m.tb > 1 ? 's' : '') + ' of games' : '') },
+      m.no ? h('span', { class: 'no' }, '#' + m.no) : null,
+      m.kind === 'bye' ? [row(m, m.s[0] ? 0 : 1), h('span', { class: 'bye-tag' }, 'bye')] : [row(m, 0), row(m, 1)]);
+    const els = [], segs = [], pos = new Map();
+    let y = BK.pad, cols = 0;
+    st.brackets.forEach((bk) => {
+      els.push(h('div', { class: 'bt', style: 'left:' + BK.pad + 'px;top:' + y + 'px' }, bk.name, bk.k ? h('span', { class: 'muted' }, ' (' + lossTxt(bk.k) + ')') : null));
+      const base = y + 36;
+      bk.rounds.forEach((rd, ri) => els.push(h('div', { class: 'ch', style: 'left:' + (BK.pad + ri * (BK.w + BK.colGap)) + 'px;top:' + (base - 14) + 'px;width:' + BK.w + 'px' }, 'Round ' + rd.round)));
+      bk.rounds.forEach((rd) => rd.matches.forEach((m) => {
+        const x = BK.pad + m.x * (BK.w + BK.colGap), cy = base + BK.top + m.y * BK.rowH + BK.h / 2, hh = m.kind === 'bye' ? BK.hb : BK.h;
+        pos.set(m.id, { x, cy });
+        els.push(box(m, x, cy - hh / 2, hh));
+      }));
+      y = base + BK.top + bk.rows * BK.rowH + 22;
+      cols = Math.max(cols, bk.rounds.length);
+    });
+    st.brackets.forEach((bk) => bk.rounds.forEach((rd) => rd.matches.forEach((m) => (m.f || []).forEach((fid) => {
+      const a = pos.get(fid), b = pos.get(m.id);
+      if (!a || !b) return;
+      const x1 = a.x + BK.w, xm = x1 + BK.colGap / 2;
+      segs.push('M' + x1 + ' ' + a.cy + 'H' + xm + 'V' + b.cy + 'H' + b.x);
+    }))));
+    const fx = BK.pad + cols * (BK.w + BK.colGap) + 6;            // the final stage and the champion: at the right of the widest bracket, level with the winners final
+    const wb = st.brackets[0].rounds[st.brackets[0].rounds.length - 1].matches[0];
+    let fy = wb ? pos.get(wb.id).cy - BK.h / 2 : BK.pad + 50;
+    els.push(h('div', { class: 'bt', style: 'left:' + fx + 'px;top:' + (fy - 44) + 'px' }, 'Final'));
+    const byNo = new Map();            // match number -> its place in the drawing (the lines to the first match of the final stage start there)
+    st.brackets.forEach((bk) => bk.rounds.forEach((rd) => rd.matches.forEach((m) => { if (m.no) byNo.set(m.no, pos.get(m.id)); })));
+    st.final.forEach((f, i) => {
+      const m = { kind: 'real', a: f.a, b: f.b, sa: f.sa, sb: f.sb, tb: f.tb, winner: f.winner, done: f.done, s: f.s, no: f.no, g: f.g };
+      if (i === 0) (f.s || []).forEach((sl) => { const a = sl && byNo.get(sl[1]); if (a) segs.push('M' + (a.x + BK.w) + ' ' + a.cy + 'H' + (fx - BK.colGap / 2) + 'V' + (fy + BK.h / 2) + 'H' + fx); });
+      els.push(h('div', { class: 'ch', style: 'left:' + fx + 'px;top:' + (fy - 30) + 'px;width:' + BK.w + 'px' }, st.losses === 2 ? (i === 0 ? 'Grand final' : 'Deciding match') : 'Final ' + (i + 1)));
+      els.push(box(m, fx, fy, BK.h));
+      fy += BK.rowH + 22;
+    });
+    if (st.champion) els.push(h('div', { class: 'mb champ', style: 'left:' + fx + 'px;top:' + (fy + 6) + 'px;height:' + BK.h + 'px' }, h('div', { class: 'r win' }, h('span', { class: 'nm', title: nm(st.champion) }, nm(st.champion))), h('div', { class: 'r' }, h('span', { class: 'nm muted' }, 'Champion, ' + lossTxt(st.loss[st.champion])))));
+    const W = fx + BK.w + BK.pad, H = Math.max(y, fy + BK.h + 30);
+    const lines = [];
+    for (let k = 0; k < st.losses; k++) {            // how many players are in with how many losses (the names only when there are few)
+      const ids = T.snap.cfg.engine_ids.filter((id) => st.loss[id] === k && !st.out.some((o) => o.id === id));
+      if (ids.length) lines.push(h('div', {}, h('b', {}, lossTxt(k) + ' (' + ids.length + ')'), ids.length <= 8 ? [': ', ids.map((id) => nm(id)).join(', ')] : null));
+    }
+    if (st.out.length) lines.push(h('div', { class: 'muted' }, 'Out (' + st.out.length + ')'));
+    standBody.appendChild(h('div', { class: 'help', style: 'padding:2px 2px 8px' }, lines));
+    standBody.appendChild(h('div', { class: 'brk', style: 'width:' + W + 'px;height:' + H + 'px' }, svg('svg', { width: W, height: H }, svg('path', { d: segs.join(''), fill: 'none', stroke: '#8a8a8a', 'stroke-width': 1 })), els));
+  }
+
+  function applyWide() {            // a bracket needs the width of the window: the boards and the viewer move below it
+    const on = isBracketTree() && S.wideBracket !== false;
+    if (hdr.grid) hdr.grid.classList.toggle('wide', on);
+    if (hdr.wide) hdr.wide.classList.toggle('hidden', !isBracketTree());
+    standBody.style.maxHeight = on ? 'calc(100vh - 250px)' : 'calc(100vh - 330px)';
+  }
+  const isBracketTree = () => T.tab === 'bracket' && !!T.structure && T.structure.kind === 'bracket';
 
   function renderElimBracket(st) {
     const nm = (id) => (id ? T.names[id] : 'bye');
@@ -435,6 +508,7 @@
 
   function renderBracket() {
     const st = T.structure;
+    if (st && st.kind === 'bracket') return renderBracketTree(st);
     if (st && st.kind === 'elimination') return renderElimBracket(st);
     if (!st || !st.rounds) { standBody.appendChild(h('div', { class: 'empty' }, 'The bracket appears when the first games finish.')); return; }
     const nm = (id) => (id ? T.names[id] : 'bye');
@@ -703,6 +777,7 @@
     if (k === 'ArrowLeft') gotoPly(T.ply - 1); else if (k === 'ArrowRight') gotoPly(T.ply + 1); else if (k === 'Home') gotoPly(0); else if (k === 'End') gotoPly(1e9); else return;
     e.preventDefault();
   });
+  A.on('game_start', (ev) => { if (inRun && T.snap && ev.tid === T.snap.id && isBracketTree()) refreshStanding(); });          // (the bracket marks the matches that are being played)
   A.on('resync', () => A.emit('hello', {}));          // the server dropped events this window had not read: load the state again, as after a reconnect
   A.on('hello', async () => {          // (re)connected: resynchronise with the server
     if (!T.snap) return;

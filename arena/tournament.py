@@ -154,7 +154,7 @@ class Tournament:
                     "active": len(self.active), "error": self.error, "structure": self.sched.structure(self._games_for_sched())})
 
     def _games_for_sched(self):
-        return [{"white": g["white"], "black": g["black"], "result": g["result"], "batch": g["batch"], "pair": g["pair"]} for g in self.games]
+        return [{"white": g["white"], "black": g["black"], "result": g["result"], "batch": g["batch"], "pair": g["pair"], "gid": g["gid"]} for g in self.games]
 
     # --------------------------------------------------------------------------------------------------------------- run
     def start(self):
@@ -273,7 +273,7 @@ class Tournament:
             self.run_started = None
 
     def _games_for_sched_before(self, batch_no):
-        return [{"white": g["white"], "black": g["black"], "result": g["result"], "batch": g["batch"], "pair": g["pair"]} for g in self.games if g["batch"] < batch_no]
+        return [{"white": g["white"], "black": g["black"], "result": g["result"], "batch": g["batch"], "pair": g["pair"], "gid": g["gid"]} for g in self.games if g["batch"] < batch_no]
 
     def _expand(self, batch, batch_no):
         tasks = []
@@ -416,7 +416,7 @@ class Tournament:
             active = [dict(v) for v in self.active.values()]
         return {"id": self.id, "name": self.cfg.get("name"), "format": self.cfg["format"], "status": self.status, "error": self.error, "total": self.total,
                 "done": len(games), "elapsed": round(self.elapsed(), 1), "cfg": self.public_cfg(), "games": games, "active": active,
-                "structure": self.sched.structure([{"white": g["white"], "black": g["black"], "result": g["result"], "batch": g["batch"], "pair": g["pair"]} for g in games]),
+                "structure": self.sched.structure([{"white": g["white"], "black": g["black"], "result": g["result"], "batch": g["batch"], "pair": g["pair"], "gid": g["gid"]} for g in games]),
                 "book": self.book.name, "book_size": len(self.book)}
 
     def public_cfg(self):

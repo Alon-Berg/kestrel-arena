@@ -5,7 +5,7 @@
 
   // ======================================================================================================== state
   const DEFAULT_S = {
-    name: '', format: 'roundrobin', games: 2, rounds: 1, hero: '', swiss_rounds: 5, ko_games: 2, seeding: 'rating', losses: 2, showOff: false, wideBracket: true,
+    name: '', format: 'roundrobin', games: 2, rounds: 1, hero: '', swiss_rounds: 5, ko_games: 2, seeding: 'rating', losses: 2, armageddon: '3', showOff: false, wideBracket: true,
     tcMode: 'time', base: 10, inc: 0.1, movetime: 100, nodes: 20000, depth: 10,
     hash: 64, threads: 1, concurrency: 2, margin_ms: 600, overhead_ms: 'auto', priority: 'above', seed: 1, v: 2,
     openings: { source: 'builtin', path: '', order: 'random' },
@@ -115,7 +115,9 @@
       }
       if (S.format === 'swiss') { dynamic.appendChild(field('Rounds', num('swiss_rounds', { min: 1, max: 50 }))); dynamic.appendChild(field('Games per pairing', num('games', { min: 1, max: 100 }))); }
       if (S.format === 'elimination') dynamic.appendChild(field('Losses to be out', num('losses', { min: 1, max: 10 }), h('span', { class: 'help' }, '1 = knockout, 2 = double elimination (winners and losers bracket), 3 = triple, ...')));
-      if (isBracket(S.format)) { dynamic.appendChild(field('Games per match', num('ko_games', { min: 2, max: 1000, step: 2 }), h('span', { class: 'help' }, 'ties are broken by extra pairs of games'))); dynamic.appendChild(field('Seeding', sel('seeding', [['rating', 'By Elo (best first)'], ['list', 'As listed'], ['random', 'Random']]))); }
+      if (isBracket(S.format)) { dynamic.appendChild(field('Games per match', num('ko_games', { min: 2, max: 1000, step: 2 }), h('span', { class: 'help' }, 'ties are broken by extra pairs of games'))); dynamic.appendChild(field('Seeding', sel('seeding', [['rating', 'By Elo (best first)'], ['list', 'As listed'], ['random', 'Random']])));
+        dynamic.appendChild(field('Armageddon', sel('armageddon', [['-1', 'Never (the better seed goes through after 8 extra pairs)'], ['0', 'Right after the games of the match']].concat([1, 2, 3, 4, 5, 6, 7, 8].map((n) => [String(n), 'After ' + n + ' extra pair' + (n > 1 ? 's' : '') + ' of games'])),
+          null), h('span', { class: 'help' }, 'one game decides a level match: a draw counts as a win for Black, the colours are tossed'))); }
     }
     refreshDynamic = refreshDyn;
 
@@ -242,7 +244,7 @@
     }
     try {
       const snap = await A.post('/api/tournament/create', {
-        name: S.name, format: S.format, engines: use, games: S.games, rounds: S.rounds, hero: S.hero, swiss_rounds: S.swiss_rounds, ko_games: S.ko_games, seeding: S.seeding, losses: S.losses,
+        name: S.name, format: S.format, engines: use, games: S.games, rounds: S.rounds, hero: S.hero, swiss_rounds: S.swiss_rounds, ko_games: S.ko_games, seeding: S.seeding, losses: S.losses, armageddon: +S.armageddon >= 0 ? +S.armageddon : null,
         tc: currentTc(), hash: S.hash, threads: S.threads, concurrency: S.concurrency, margin_ms: S.margin_ms, overhead_ms: S.overhead_ms === 'auto' || S.overhead_ms === undefined ? 'auto' : (S.overhead_ms === '' ? null : +S.overhead_ms), priority: S.priority, openings: S.openings, adj: S.adj, seed: S.seed, start: true });
       loadSnapshot(snap);
       showRun();
@@ -429,8 +431,8 @@
       return h('div', { class: 'r ph' }, h('span', { class: 'nm' }, place(m.s[i])));
     };
     const box = (m, x, y, hh, ww) => h('div', { class: 'mb' + (m.kind === 'bye' ? ' bye' : '') + (m.kind === 'real' && !m.done && m.a && m.b && live.has(m.a + '|' + m.b) ? ' live' : '') + (m.g && m.g.length ? ' clk' : ''), onclick: m.g && m.g.length ? () => selectFinished(m.g[0]) : null, style: 'left:' + x + 'px;top:' + y + 'px;height:' + hh + 'px' + (ww ? ';width:' + ww + 'px' : ''),
-      title: (m.no ? 'Match #' + m.no : '') + (m.g && m.g.length ? ' - click to replay its first game' : '') + (m.tb ? ' - ' + m.tb + ' extra pair' + (m.tb > 1 ? 's' : '') + ' of games' : '') },
-      m.no ? h('span', { class: 'no' }, '#' + m.no) : null,
+      title: (m.no ? 'Match #' + m.no : '') + (m.g && m.g.length ? ' - click to replay its first game' : '') + (m.tb ? ' - ' + m.tb + ' extra pair' + (m.tb > 1 ? 's' : '') + ' of games' : '') + (m.arm ? ' - decided by an Armageddon game: ' + nm(m.arm) + ' had White, a draw counted as a win for Black' : '') },
+      m.no ? h('span', { class: 'no' }, '#' + m.no + (m.arm ? ' - Armageddon' : '')) : null,
       m.kind === 'bye' ? [row(m, m.s[0] ? 0 : 1), h('span', { class: 'bye-tag' }, 'bye')] : [row(m, 0), row(m, 1)]);
     const els = [], segs = [], pos = new Map();
     let y = BK.pad, cols = 0;
@@ -474,7 +476,7 @@
         const cy = srcs.length ? srcs.reduce((t, p) => t + p.cy, 0) / srcs.length : fy + BK.h / 2;
         srcs.forEach((p) => segs.push('M' + (p.x + p.w) + ' ' + p.cy + 'H' + (x - BK.colGap / 2) + 'V' + cy + 'H' + x));
         els.push(h('div', { class: 'ch', style: 'left:' + x + 'px;top:' + (cy - BK.h / 2 - 30) + 'px;width:' + BK.fw + 'px' }, st.losses === 2 ? 'Grand final' : 'Final ' + (i + 1) + ': ' + (fk[0] === null ? 'winner' : bn(fk[0])) + ' vs ' + bn(fk[1])));
-        els.push(box({ kind: 'real', a: f.a, b: f.b, sa: f.sa, sb: f.sb, tb: f.tb, winner: f.winner, done: f.done, s: f.s, no: f.no, g: f.g, la: f.la, lb: f.lb }, x, cy - BK.h / 2, BK.h, BK.fw));
+        els.push(box({ kind: 'real', a: f.a, b: f.b, sa: f.sa, sb: f.sb, tb: f.tb, winner: f.winner, done: f.done, s: f.s, no: f.no, g: f.g, la: f.la, lb: f.lb, arm: f.arm }, x, cy - BK.h / 2, BK.h, BK.fw));
         byNo.set(f.no, { x, cy, w: BK.fw });
       });
       const lastP = st.final.length ? byNo.get(st.final[st.final.length - 1].no) : (wb ? pos.get(wb.id) : null);          // the champion: right of the last match (of the winners final when there is no ladder)
@@ -486,7 +488,7 @@
       }
     }
     (st.ladder ? [] : st.final).forEach((f, i) => {
-      const m = { kind: 'real', a: f.a, b: f.b, sa: f.sa, sb: f.sb, tb: f.tb, winner: f.winner, done: f.done, s: f.s, no: f.no, g: f.g, la: f.la, lb: f.lb };
+      const m = { kind: 'real', a: f.a, b: f.b, sa: f.sa, sb: f.sb, tb: f.tb, winner: f.winner, done: f.done, s: f.s, no: f.no, g: f.g, la: f.la, lb: f.lb, arm: f.arm };
       if (i === 0) (f.s || []).forEach((sl) => { const a = sl && byNo.get(sl[1]); if (a) segs.push('M' + (a.x + BK.w) + ' ' + a.cy + 'H' + (fx - BK.colGap / 2) + 'V' + (fy + BK.h / 2) + 'H' + fx); });
       els.push(h('div', { class: 'ch', style: 'left:' + fx + 'px;top:' + (fy - 30) + 'px;width:' + BK.fw + 'px' }, st.losses === 2 ? (i === 0 ? 'Grand final' : 'Deciding match') : 'Final ' + (i + 1)));
       els.push(box(m, fx, fy, BK.h, BK.fw));
@@ -500,6 +502,8 @@
       if (ids.length) lines.push(h('div', {}, h('b', {}, lossTxt(k) + ' (' + ids.length + ')'), ids.length <= 8 ? [': ', ids.map((id) => nm(id)).join(', ')] : null));
     }
     if (st.out.length) lines.push(h('div', { class: 'muted' }, 'Out (' + st.out.length + ')'));
+    const armN = (T.snap.cfg.params || {}).armageddon;
+    if (armN !== undefined && armN !== null) lines.push(h('div', { class: 'muted' }, 'A match that is still level ' + (armN ? 'after ' + armN + ' extra pair' + (armN > 1 ? 's' : '') + ' of games' : 'after its games') + ' is decided by one Armageddon game: the colours are tossed, a draw counts as a win for Black (marked "Armageddon").'));
     if (st.ladder) { if (st.final.length) lines.push(h('div', { class: 'muted' }, ladderText())); }
     else if (st.losses >= 2) lines.push(h('div', { class: 'muted' }, st.losses === 2 ? 'Grand final: the two champions meet; if the champion of the losers bracket wins it, both have one loss and the deciding match follows.'
       : 'Final stage: the two players with the most losses play each other, again and again, until one of them is out (' + st.losses + ' losses). The losses behind a name are those before that match.'));
@@ -553,7 +557,7 @@
     standBody.appendChild(h('div', { class: 'bracket' }, st.rounds.map((r) => h('div', { class: 'rnd' }, h('div', { class: 'muted center' }, 'Round ' + r.round),
       r.matches.map((m) => h('div', { class: 'match' },
         h('div', { class: m.winner && m.winner === m.a ? 'win' : '' }, h('span', { class: 'ellipsis', style: 'max-width:105px', title: nm(m.a) }, nm(m.a)), h('span', { class: 'mono' }, m.bye ? '' : fmt.pts(m.sa))),
-        h('div', { class: m.winner && m.winner === m.b ? 'win' : '' }, h('span', { class: 'ellipsis', style: 'max-width:105px', title: nm(m.b) }, nm(m.b)), h('span', { class: 'mono' }, m.bye ? '' : fmt.pts(m.sb))))))).concat(
+        h('div', { class: m.winner && m.winner === m.b ? 'win' : '' }, h('span', { class: 'ellipsis', style: 'max-width:105px', title: nm(m.b) }, nm(m.b)), h('span', { class: 'mono' }, m.bye ? '' : fmt.pts(m.sb))), m.arm ? h('div', { class: 'muted', style: 'font-size:10px' }, 'Armageddon: ' + nm(m.arm) + ' had White') : null)))).concat(
       st.champion ? [h('div', { class: 'rnd' }, h('div', { class: 'muted center' }, 'Champion'), h('div', { class: 'match' }, h('div', { class: 'win' }, nm(st.champion))))] : [])));
   }
 
@@ -744,7 +748,7 @@
     if (!list.length) { listEl.appendChild(h('div', { class: 'muted' }, 'Nothing yet.')); return; }
     const rows = list.slice(0, 400).map((g) => h('tr', { class: T.sel && !T.sel.live && T.sel.gid === g.gid ? 'sel' : '', onclick: () => selectFinished(g.gid) },
       h('td', { class: 'muted right' }, g.gid), h('td', {}, T.names[g.white]), h('td', {}, T.names[g.black]),
-      h('td', { class: 'mono c', style: 'font-weight:700' }, g.result), h('td', { class: 'muted' }, g.reason), h('td', { class: 'right mono muted' }, g.plies)));
+      h('td', { class: 'mono c', style: 'font-weight:700' }, g.result), h('td', { class: 'muted' }, g.reason + (g.arm ? ' - Armageddon' : '')), h('td', { class: 'right mono muted' }, g.plies)));
     listEl.appendChild(h('div', { class: 'scroll h420' }, h('table', { class: 'tbl click' }, h('thead', {}, h('tr', {}, h('th', { class: 'r' }, '#'), h('th', {}, 'White'), h('th', {}, 'Black'), h('th', { class: 'c' }, 'Result'), h('th', {}, 'Reason'), h('th', { class: 'r' }, 'Plies'))), h('tbody', {}, rows))));
     if (list.length > 400) listEl.appendChild(h('div', { class: 'help' }, 'Showing the latest 400 of ' + list.length + ' games - filter by engine to see more.'));
   }

@@ -304,6 +304,8 @@ def build_pgn(rec, names, event="Kestrel Arena", tc=None, site="Kestrel Arena", 
     h["White"] = names.get(rec["white"], rec["white"])
     h["Black"] = names.get(rec["black"], rec["black"])
     h["Result"] = rec.get("result") or "*"
+    if rec.get("arm"):                                     # the decider of a level match: one game, a draw counts as a win for Black
+        h["Armageddon"] = "a draw counts as a win for Black"
     if tc:                                                 # PGN: 'base+increment' in seconds, '*seconds' for a fixed time per move, '?' when the limit is nodes or a depth (said in the next tag)
         mode = tc.get("mode", "time")
         h["TimeControl"] = ("%g+%g" % (tc.get("base", 0), tc.get("inc", 0))) if mode == "time" else ("*%g" % (tc.get("ms", 100) / 1000.0) if mode == "movetime" else "?")

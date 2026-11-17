@@ -266,7 +266,7 @@ def referee(sched, games, batches, N):
     return bad
 
 
-def referee2(sched, games, batches, N):
+def referee2(sched, games, batches, N, arm=None):
     """The same for the bracket with the final ladder (bracket = 2): the matches of the brackets as above, then the survivors (one for every bracket, with 0 .. min(N, n)-1 losses) meet from the bottom up,
     one match each, and the loser of each match is out; returns the problems."""
     bad = []
@@ -283,13 +283,18 @@ def referee2(sched, games, batches, N):
             by_round.setdefault(p.round, []).append((bi, p))
             if batch_round.setdefault(bi, p.round) != p.round:
                 bad.append("batch %d mixes rounds" % bi)
-            if pairing.setdefault((p.round, p.index), (p.a, p.b)) != (p.a, p.b):
+            if pairing.setdefault((p.round, p.index), (p.a, p.b)) != (p.a, p.b) and not (p.tag == "armageddon" and {p.a, p.b} == set(pairing[(p.round, p.index)])):
                 bad.append("a tie-break changes the players of a match")
+    tag_of = {(bi, p.index): p.tag for bi, batch in enumerate(batches) for p in batch}
+    armres = {}                                                                    # (round, index) -> the Armageddon game of that match (it does not count in the score)
     for g in games:
         r = batch_round[g["batch"]]
         a, b = pairing[(r, g["pair"])]
-        pa, pb = formats.points_of(g["result"], g["white"] == a)
         s = score.setdefault((r, g["pair"]), [0.0, 0.0])
+        if tag_of[(g["batch"], g["pair"])] == "armageddon":
+            armres[(r, g["pair"])] = g
+            continue
+        pa, pb = formats.points_of(g["result"], g["white"] == a)
         s[0] += pa
         s[1] += pb
     nb = len(br.steps) - len(br.ladder)                                            # the steps of the brackets, the ladder follows (one match per step)
@@ -327,7 +332,11 @@ def referee2(sched, games, batches, N):
                 bad.append("ladder match %d is not between the survivor and the next bracket up" % (j + 1))
         for p in lvl0:
             sa, sb = score[(r, p.index)]
-            win = p.a if sa > sb else (p.b if sb > sa else (p.a if rank[p.a] < rank[p.b] else p.b))
+            ag = armres.get((r, p.index))
+            if ag is not None:
+                win = ag["white"] if ag["result"] == "1-0" else ag["black"]          # (the Armageddon game: a draw counts as a win for Black)
+            else:
+                win = p.a if sa > sb else (p.b if sb > sa else (p.a if rank[p.a] < rank[p.b] else p.b))
             lose = p.b if win == p.a else p.a
             if r > nb:
                 fin.append((p.a, p.b, loss[p.a], loss[p.b], win))
@@ -365,16 +374,38 @@ def referee2(sched, games, batches, N):
         bad.append("the games of the matches in the drawing are not all the games (%d of %d)" % (len(listed), len(games)))
     if len(games) < sched.total_games():
         bad.append("fewer games than the minimum")
+    seq = {}                                                                       # the pairings of a match after its games: extra pairs, then at most one Armageddon game (after as many pairs as the setting says)
+    for batch in batches:
+        for p in batch:
+            seq.setdefault((p.round, p.index), []).append(p.tag)
+    for key, tags in seq.items():
+        has_arm = tags[-1] == "armageddon"
+        n_tb = tags.count("tiebreak")
+        sa, sb = score[key]
+        if tags[0] != "" or tags.count("armageddon") > (1 if arm is not None else 0) or tags[:len(tags) - (1 if has_arm else 0)] != [""] + ["tiebreak"] * n_tb:
+            bad.append("match %s: the pairings after its games are not extra pairs followed by at most one Armageddon game: %s" % (key, tags))
+        elif arm is None and n_tb > 8:
+            bad.append("match %s: %d extra pairs" % (key, n_tb))
+        elif arm is not None and has_arm and (n_tb != arm or sa != sb):
+            bad.append("match %s: an Armageddon game after %d extra pairs (setting %s) and the score %s" % (key, n_tb, arm, (sa, sb)))
+        elif arm is not None and not has_arm and (n_tb > arm or sa == sb):
+            bad.append("match %s: no Armageddon game although %d extra pairs, score %s (setting %s)" % (key, n_tb, (sa, sb), arm))
+    arm_gids = {g["gid"] for g in games if tag_of[(g["batch"], g["pair"])] == "armageddon"}
+    in_drawing = {m["g"][-1] for bk in st["brackets"] for rnd in bk["rounds"] for m in rnd["matches"] if m["kind"] == "real" and m.get("arm")} | {f["g"][-1] for f in st["final"] if f.get("arm")}
+    if in_drawing != arm_gids:
+        bad.append("the matches that went to an Armageddon game in the drawing (%d) are not the ones that did (%d)" % (len(in_drawing), len(arm_gids)))
     return bad
 
 
-def run(n, N, policy, seed=1, gpm=2, seeding="rating", version=2):
+def run(n, N, policy, seed=1, gpm=2, seeding="rating", version=2, arm=None):
     ids = ["p%d" % i for i in range(1, n + 1)]
     ratings = {i: 3000 - 10 * k for k, i in enumerate(ids)}
     params = {"losses": N, "ko_games": gpm, "seeding": seeding, "bracket": version}           # (2: the final ladder, True/1: the first version of the bracket, its final stage depends on the results)
+    if arm is not None:
+        params["armageddon"] = arm                                                           # (extra pairs of games after which an Armageddon game decides a level match)
     sched = formats.make_scheduler("elimination", ids, ratings, params, seed)
     games, batches = drive(sched, results(policy, sched.seeds, seed))
-    bad = (referee2 if version == 2 else referee)(sched, games, batches, sched.losses)
+    bad = referee2(sched, games, batches, sched.losses, arm) if version == 2 else referee(sched, games, batches, sched.losses)
     again = formats.make_scheduler("elimination", ids, ratings, params, seed)
     for b in range(len(batches)):
         if shape([again.next_batch([g for g in games if g["batch"] < b], b)]) != shape([batches[b]]):
@@ -413,6 +444,21 @@ for N in (1, 2, 3):                                              # the first ver
             problems += ["n=%d %s: %s" % (n, policy, x) for x in bad]
     check(not problems, "the first version of the bracket (final stage by losses) with %d loss%s still plays by its rules (%d tournaments)%s"
           % (N, "" if N == 1 else "es", runs, "" if not problems else " - " + "; ".join(problems[:4])))
+
+for arm in (0, 1, 3, 8):                                         # the Armageddon decider: a match that is still level after `arm` extra pairs of games is decided by one game (a draw counts as a win for Black)
+    problems, runs, total, n_arm = [], 0, 0, 0
+    for n in (2, 3, 4, 5, 8, 9, 13, 17):
+        for N in (1, 2, 3):
+            for policy in ("draws", "random"):
+                sched, games, batches, bad = run(n, N, policy, seed=n * 7 + N + arm, arm=arm)
+                runs += 1
+                total += len(games)
+                n_arm += sum(1 for b in batches for p in b if p.tag == "armageddon")
+                problems += ["n=%d N=%d %s: %s" % (n, N, policy, x) for x in bad]
+    check(not problems and n_arm > 0, "bracket with the final ladder and an Armageddon game after %d extra pair(s), 2..17 engines x 1..3 losses x all drawn / random results (%d tournaments, %d games, %d Armageddon games): the rules hold%s"
+          % (arm, runs, total, n_arm, "" if not problems else " - " + "; ".join(problems[:4])))
+sched, games, batches, bad = run(8, 2, "draws", seed=3)                                  # (no setting: a level match goes to the better seed after 8 extra pairs, as before)
+check(not bad and not any(p.tag == "armageddon" for b in batches for p in b) and len(games) == 14 * 18, "without the setting there is no Armageddon game in the bracket (%d games)" % len(games))
 
 problems = []
 for N, n, policy, gpm, seeding in [(5, 9, "random", 2, "rating"), (3, 24, "random", 4, "random"), (2, 33, "random", 2, "list"), (2, 45, "random", 2, "rating"), (5, 6, "random", 2, "rating"),

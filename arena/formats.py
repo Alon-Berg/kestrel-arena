@@ -202,6 +202,19 @@ class Swiss:
 _seed_positions = seed_positions            # (the standard bracket order of the seeds; arena/bracket.py)
 
 
+def _armageddon(params):
+    """The number of extra pairs of games after which an Armageddon game decides a match that is still level (0 = right after the games of the match), None = no Armageddon: the better seed goes through
+    after 8 extra pairs, as before the Armageddon existed (a tournament made without the setting keeps that)."""
+    v = (params or {}).get("armageddon")
+    if v is None or v is False or v == "":
+        return None
+    try:
+        n = int(v)
+    except (TypeError, ValueError):
+        return None
+    return n if 0 <= n <= 8 else None
+
+
 class Knockout:
     name = "knockout"
 
@@ -210,6 +223,8 @@ class Knockout:
         self.games = max(2, int(params.get("ko_games", params.get("games", 2))))
         if self.games % 2:
             self.games += 1
+        self.seed = int(seed or 1)
+        self.arm = _armageddon(params)
         rng = random.Random(int(seed or 1))
         ids = list(ids)
         seeding = params.get("seeding", "rating")
@@ -225,6 +240,11 @@ class Knockout:
 
     def total_games(self):
         return (len(self.seeds) - 1) * self.games
+
+    def _arm_colours(self, x, y):
+        """(White, Black) of the Armageddon game of x and y: a coin toss that only depends on the seed of the tournament and the two players, so a resumed tournament tosses the same way. Black has the draw odds."""
+        a, b = sorted((x, y))
+        return (a, b) if random.Random("armageddon|%d|%s|%s" % (self.seed, a, b)).random() < 0.5 else (b, a)
 
     def _first_round(self):
         pos = _seed_positions(self.p)
@@ -247,27 +267,37 @@ class Knockout:
             for i, (x, y) in enumerate(matches):
                 score[i], played[i] = [0.0, 0.0], 0
                 if x is None or y is None:
-                    ui_matches.append({"a": x, "b": y, "sa": 0, "sb": 0, "winner": x or y, "bye": True, "done": True})
+                    ui_matches.append({"a": x, "b": y, "sa": 0, "sb": 0, "winner": x or y, "bye": True, "done": True, "arm": None})
                 else:
                     pending[i] = (x, y)
-                    ui_matches.append({"a": x, "b": y, "sa": 0, "sb": 0, "winner": None, "bye": False, "done": False})
+                    ui_matches.append({"a": x, "b": y, "sa": 0, "sb": 0, "winner": None, "bye": False, "done": False, "arm": None})          # arm: the player who has White in the Armageddon game
             level = 0
             while pending:
+                arm_now = self.arm is not None and level == self.arm + 1                  # the Armageddon game of every match that is still level
                 if not ui and b == batch_no:
-                    out = [Pairing(x, y, self.games if level == 0 else 2, rnd, i, "tiebreak" if level else "") for i, (x, y) in sorted(pending.items())]
+                    if arm_now:
+                        out = [Pairing(*self._arm_colours(x, y), 1, rnd, i, "armageddon") for i, (x, y) in sorted(pending.items())]
+                    else:
+                        out = [Pairing(x, y, self.games if level == 0 else 2, rnd, i, "tiebreak" if level else "") for i, (x, y) in sorted(pending.items())]
                     return out, None
-                expected = self.games if level == 0 else 2
+                expected = 1 if arm_now else (self.games if level == 0 else 2)
                 cnt = {i: 0 for i in pending}
+                arm_win = {}
                 for g in by_batch.get(b, []):
                     i = g.get("pair")
                     if i in pending:
                         x, y = pending[i]
-                        pa, pb = points_of(g["result"], g["white"] == x)
-                        score[i][0] += pa
-                        score[i][1] += pb
+                        if arm_now:
+                            arm_win[i] = g["white"] if g["result"] == "1-0" else g["black"]          # (a draw: Black wins; the game does not count in the score of the match)
+                        else:
+                            pa, pb = points_of(g["result"], g["white"] == x)
+                            score[i][0] += pa
+                            score[i][1] += pb
                         cnt[i] += 1
                 for i in pending:
                     ui_matches[i]["sa"], ui_matches[i]["sb"] = score[i]
+                    if arm_now:
+                        ui_matches[i]["arm"] = self._arm_colours(*pending[i])[0]                       # (the player who has White)
                 if ui and any(cnt[i] < expected for i in pending):
                     rounds_ui.append({"round": rnd, "matches": ui_matches})
                     return None, {"rounds": rounds_ui, "games": self.games}
@@ -275,7 +305,10 @@ class Knockout:
                 nxt = {}
                 for i, (x, y) in pending.items():
                     sa, sb = score[i]
-                    if sa != sb or level >= 8:
+                    if arm_now:
+                        ui_matches[i]["winner"] = arm_win.get(i) or (x if seed_rank[x] < seed_rank[y] else y)
+                        ui_matches[i]["done"] = True
+                    elif sa != sb or (self.arm is None and level >= 8):
                         ui_matches[i]["winner"] = x if (sa > sb or (sa == sb and seed_rank[x] < seed_rank[y])) else y
                         ui_matches[i]["done"] = True
                     else:
@@ -505,6 +538,7 @@ class _Walk:
         self.gids = {}                      # match id -> numbers of its games (the drawing links a match to them)
         self.loss = {s: 0 for s in seeds}
         self.before = {}                    # match id -> {player: his losses before the match} (the drawing of the final stage shows them)
+        self.arm = {}                       # match id (or 'F1' ...) -> the player who had White in its Armageddon game (the matches that went to one)
         self.out = []                       # [{"id", "round"}] in the order of elimination
 
     def who(self, slot):
@@ -588,6 +622,7 @@ class Elimination(Knockout):
                         d["sa"], d["sb"] = points(mid, a, b)
                         d["tb"] = w.tb.get(mid, 0)
                         d["g"] = w.gids.get(mid, [])
+                        d["arm"] = w.arm.get(mid)                      # the player who had White in the Armageddon game, None: the match did not go to one
                         got = w.res.get(mid)
                         d["winner"], d["done"] = (got[0] if got else None), got is not None
                     else:
@@ -605,7 +640,7 @@ class Elimination(Knockout):
                 got = w.res.get(mid)
                 before = w.before.get(mid, {})
                 fin.append({"id": mid, "no": m.no, "a": a, "b": b, "sa": sa, "sb": sb, "tb": w.tb.get(mid, 0), "winner": got[0] if got else None, "done": got is not None,
-                            "s": [slot_text(m.src[0]), slot_text(m.src[1])], "g": w.gids.get(mid, []), "la": before.get(a), "lb": before.get(b), "fk": list(m.fk)})
+                            "s": [slot_text(m.src[0]), slot_text(m.src[1])], "g": w.gids.get(mid, []), "la": before.get(a), "lb": before.get(b), "fk": list(m.fk), "arm": w.arm.get(mid)})
         else:
             first = br.first_final()
             first_s = [slot_text(first[0]), slot_text(first[1])] if first is not None else [None, None]       # where the players of the first match of the final stage come from
@@ -614,7 +649,7 @@ class Elimination(Knockout):
                 sa, sb = points(f["key"], a, b)
                 got = w.res.get(f["key"])
                 fin.append({"no": f["no"], "a": a, "b": b, "sa": sa, "sb": sb, "tb": w.tb.get(f["key"], 0), "winner": got[0] if got else None, "done": got is not None, "s": first_s if i == 0 else [None, None],
-                            "g": w.gids.get(f["key"], []), "la": f["la"], "lb": f["lb"]})
+                            "g": w.gids.get(f["key"], []), "la": f["la"], "lb": f["lb"], "arm": w.arm.get(f["key"])})
             if not fin and first is not None:                          # the final stage has not begun: its first match, with the places it is made of
                 fin.append({"no": None, "a": None, "b": None, "sa": 0.0, "sb": 0.0, "tb": 0, "winner": None, "done": False, "s": first_s, "la": None, "lb": None})
         return {"kind": "bracket", "ladder": self.ladder, "losses": self.losses, "games": self.games, "p": br.p, "brackets": brackets, "final": fin, "loss": dict(w.loss), "out": list(w.out), "champion": champion}
@@ -636,29 +671,41 @@ class Elimination(Knockout):
             nonlocal b
             level = 0
             while pend:
+                arm_now = self.arm is not None and level == self.arm + 1          # the Armageddon game of every match that is still level
                 if not ui and b == batch_no:
+                    if arm_now:
+                        return "batch", [Pairing(*self._arm_colours(x, y), 1, rnd, i, "armageddon") for i, (key, x, y) in sorted(pend.items())]
                     return "batch", [Pairing(x, y, self.games if level == 0 else 2, rnd, i, "tiebreak" if level else "") for i, (key, x, y) in sorted(pend.items())]
-                expected = self.games if level == 0 else 2
+                expected = 1 if arm_now else (self.games if level == 0 else 2)
                 cnt = {i: 0 for i in pend}
+                armw = {}
                 for g in by_batch.get(b, []):
                     i = g.get("pair")
                     if i in pend:
                         key, x, y = pend[i]
-                        pa, pb = points_of(g["result"], g["white"] == x)
-                        w.pts[key][x] += pa
-                        w.pts[key][y] += pb
+                        if arm_now:
+                            armw[i] = g["white"] if g["result"] == "1-0" else g["black"]          # (a draw: Black wins; the game does not count in the score of the match)
+                        else:
+                            pa, pb = points_of(g["result"], g["white"] == x)
+                            w.pts[key][x] += pa
+                            w.pts[key][y] += pb
                         cnt[i] += 1
                         if g.get("gid") is not None:
                             w.gids.setdefault(key, []).append(g["gid"])
                 for key, x, y in pend.values():
-                    w.tb[key] = level
+                    w.tb[key] = level - 1 if arm_now else level                   # (the extra pairs that were played)
+                    if arm_now:
+                        w.arm[key] = self._arm_colours(x, y)[0]                    # (the player who has White; Black has the draw odds)
                 unfinished = ui and any(cnt[i] < expected for i in pend)       # (a missing game of an earlier batch is not waited for, as in the Knockout)
                 nxt = {}
                 for i, (key, x, y) in pend.items():
                     sx, sy = w.pts[key][x], w.pts[key][y]
                     if unfinished and cnt[i] < expected:
                         nxt[i] = (key, x, y)                                       # still being played
-                    elif sx != sy or level >= TIEBREAK_LEVELS:
+                    elif arm_now:
+                        win = armw.get(i) or (x if rank[x] < rank[y] else y)
+                        w.decide(key, win, y if win == x else x, rnd, n_out, force=key in ladder)
+                    elif sx != sy or (self.arm is None and level >= TIEBREAK_LEVELS):
                         win = x if (sx > sy or (sx == sy and rank[x] < rank[y])) else y
                         w.decide(key, win, y if win == x else x, rnd, n_out, force=key in ladder)      # (decided matches of a round in progress count at once)
                     else:

@@ -139,7 +139,7 @@ class Tournament:
 
     @staticmethod
     def _summary(rec):
-        return {k: rec.get(k) for k in ("gid", "key", "batch", "pair", "g", "round", "white", "black", "result", "reason", "plies", "dur", "ended")}
+        return {k: rec.get(k) for k in ("gid", "key", "batch", "pair", "g", "round", "white", "black", "result", "reason", "plies", "dur", "ended", "arm")}
 
     def elapsed(self):
         return self.elapsed_before + ((time.monotonic() - self.run_started) if self.run_started else 0.0)
@@ -281,7 +281,7 @@ class Tournament:
             for g in range(p.games):
                 w, b = (p.a, p.b) if g % 2 == 0 else (p.b, p.a)
                 tasks.append({"key": "%d:%d:%d" % (batch_no, p.index, g), "batch": batch_no, "pair": p.index, "g": g, "round": p.round,
-                              "white": w, "black": b, "per_pair": (p.games + 1) // 2})
+                              "white": w, "black": b, "per_pair": (p.games + 1) // 2, "arm": p.tag == "armageddon"})
         return tasks
 
     def _task_done(self):
@@ -382,6 +382,8 @@ class Tournament:
             self._emit({"type": "game_aborted", "gid": gid})
             return
         rec.update({"gid": gid, "key": task["key"], "batch": task["batch"], "pair": task["pair"], "g": task["g"], "round": task["round"]})
+        if task.get("arm"):
+            rec["arm"] = 1                                                    # the Armageddon game of a level match (a draw counts as a win for Black)
         self._store(rec)
 
     def _forfeit(self, task, result, why):

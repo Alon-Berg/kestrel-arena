@@ -116,6 +116,65 @@ for b in range(nb):
 check(same, "knockout: the schedule regenerates identically for a resumed tournament")
 
 
+# knockout with an Armageddon decider ('armageddon' = the extra pairs of games after which ONE game decides a level match: the colours are tossed, a draw counts as a win for Black)
+def play_arm(sched, rng, draw_p, arm_policy="random"):
+    """Plays every batch; the game of an Armageddon pairing gets the result of arm_policy ('draw', 'white', 'black' or 'random'), every other game is drawn with probability draw_p. Returns (games, batches)."""
+    games, batches = [], []
+    while True:
+        batch = sched.next_batch([g for g in games if g["batch"] < len(batches)], len(batches))
+        if batch is None:
+            return games, batches
+        for p in batch:
+            for g in range(p.games):
+                w, b = (p.a, p.b) if g % 2 == 0 else (p.b, p.a)
+                if p.tag == "armageddon":
+                    res = {"draw": "1/2-1/2", "white": "1-0", "black": "0-1"}.get(arm_policy) or rng.choice(["1-0", "0-1", "1/2-1/2"])
+                else:
+                    r = rng.random()
+                    res = "1/2-1/2" if r < draw_p else ("1-0" if rng.random() < 0.5 else "0-1")
+                games.append({"white": w, "black": b, "result": res, "batch": len(batches), "pair": p.index})
+        batches.append(batch)
+        if len(batches) > 400:
+            raise RuntimeError("runaway tournament")
+
+
+ids = ["k%d" % i for i in range(1, 9)]
+ratings = {i: 3000 - k * 10 for k, i in enumerate(ids)}
+check([formats._armageddon(p) for p in ({}, {"armageddon": None}, {"armageddon": 2}, {"armageddon": "2"}, {"armageddon": 0}, {"armageddon": -1}, {"armageddon": 9}, {"armageddon": ""})] == [None, None, 2, 2, 0, None, None, None],
+      "the setting: absent, empty, -1 and 9 mean no Armageddon, 0 means right after the games of the match, 1..8 the extra pairs before it")
+for arm in (0, 1, 3, 8):
+    ko = formats.make_scheduler("knockout", ids, ratings, {"ko_games": 2, "armageddon": arm}, 1)
+    games, batches = play_arm(ko, random.Random(arm), 1.0, "draw")                         # every game is drawn: every match goes to its Armageddon game, which Black wins
+    arm_pairs = [p for b in batches for p in b if p.tag == "armageddon"]
+    st = ko.structure(games)
+    ms = [m for r in st["rounds"] for m in r["matches"]]
+    check(len(arm_pairs) == 7 and all(p.games == 1 for p in arm_pairs) and len(games) == 7 * (3 + 2 * arm) and all(m["winner"] == (m["b"] if m["arm"] == m["a"] else m["a"]) for m in ms) and st["champion"] in ids,
+          "knockout of 8, Armageddon after %d extra pair(s), every game drawn: 7 Armageddon games (one game each), %d games, Black wins every match" % (arm, len(games)))
+ko = formats.make_scheduler("knockout", ids, ratings, {"ko_games": 2, "armageddon": 1}, 1)
+games, batches = play_arm(ko, random.Random(5), 1.0, "white")
+ms = [m for r in ko.structure(games)["rounds"] for m in r["matches"]]
+check(all(m["winner"] == m["arm"] for m in ms), "...and when White wins the Armageddon game, White goes through")
+for seed_k in (1, 2, 3):
+    ko = formats.make_scheduler("knockout", ids, ratings, {"ko_games": 2, "armageddon": 2}, 1)
+    games, batches = play_arm(ko, random.Random(seed_k), 0.85)
+    st = ko.structure(games)
+    ms = [m for r in st["rounds"] for m in r["matches"]]
+    n_arm = sum(1 for b in batches for p in b if p.tag == "armageddon")
+    check(n_arm == sum(1 for m in ms if m["arm"]) and all((m["sa"] == m["sb"]) == bool(m["arm"]) for m in ms) and all(m["done"] for m in ms) and st["champion"] in ids
+          and all(m["sa"] + m["sb"] == len([1 for g in games if {g["white"], g["black"]} == {m["a"], m["b"]}]) - (1 if m["arm"] else 0) for m in ms),
+          "knockout of 8, Armageddon after 2 pairs, 85 %% draws (run %d): only the matches that were level after the games and 2 extra pairs go to an Armageddon game, and that game does not count in the score (%d of them)" % (seed_k, n_arm))
+    ko2 = formats.make_scheduler("knockout", ids, ratings, {"ko_games": 2, "armageddon": 2}, 1)
+    same = all([(p.a, p.b, p.games, p.index, p.tag) for p in ko2.next_batch([g for g in games if g["batch"] < b], b)] == [(p.a, p.b, p.games, p.index, p.tag) for p in batches[b]] for b in range(len(batches)))
+    check(same, "...a resumed tournament regenerates the same batches, with the same colours in the Armageddon games")
+ko_a = formats.make_scheduler("knockout", ids, ratings, {"ko_games": 2, "armageddon": 0}, 1)
+ko_b = formats.make_scheduler("knockout", ids, ratings, {"ko_games": 2, "armageddon": 0}, 2)
+whites = {s: [ko._arm_colours(ids[0], ids[k])[0] == ids[0] for k in range(1, 8)] for s, ko in ((1, ko_a), (2, ko_b))}
+check(whites[1] != whites[2] and 2 <= sum(whites[1]) <= 6 and ko_a._arm_colours(ids[0], ids[3]) == ko_a._arm_colours(ids[3], ids[0]), "the colours of the Armageddon game are tossed: they depend on the seed of the tournament, not on the order of the players (%s)" % whites[1])
+ko = formats.make_scheduler("knockout", ids, ratings, {"ko_games": 2}, 1)
+games, batches = play_arm(ko, random.Random(9), 1.0)
+check(not any(p.tag == "armageddon" for b in batches for p in b) and len(games) == 7 * 18, "without the setting there is no Armageddon: a match that is level after 8 extra pairs goes to the better seed, as before (%d games)" % len(games))
+
+
 # ---------------------------------------------------------------------------------------------------------------- elimination (N losses)
 def drive(sched, fn, max_batches=3000):
     """Plays the whole tournament with the results fn(white, black, batch, pair, g); returns (games, batches of Pairing)."""

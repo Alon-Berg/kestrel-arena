@@ -155,6 +155,46 @@ check(listed == len(t2.games) == 20, "...every game of the tournament is linked 
 gamemod.play_game = orig
 st2.shutdown()
 
+
+# ----------------------------------------------------------------------------------------------------------------- Armageddon: a level match is decided by one more game (stub games: every game is drawn)
+def stub_draw(spec, w, b, on_update=None, should_stop=None):
+    time.sleep(0.02)
+    rec = {"white": spec["white"], "black": spec["black"], "round": spec.get("round"), "result": "1/2-1/2", "reason": "threefold repetition", "start_fen": None, "uci": [], "san": [], "cp": [], "depth": [],
+           "ms": [], "nodes": [], "book": 0, "plies": 0, "dur": 0.0, "ended": "2026-01-01T00:00:00"}
+    if should_stop and should_stop():
+        rec.update({"result": "*", "reason": "aborted"})
+    return rec
+
+
+check(build_tournament_cfg(st, dict(common, format="knockout", engines=six[:4], ko_games=2, armageddon=1))["params"].get("armageddon") == 1
+      and "armageddon" not in build_tournament_cfg(st, dict(common, format="knockout", engines=six[:4], ko_games=2))["params"]
+      and "armageddon" not in build_tournament_cfg(st, dict(common, format="roundrobin", engines=six[:4], games=2, armageddon=2))["params"]
+      and build_tournament_cfg(st, dict(common, format="knockout", engines=six[:4], armageddon=0))["params"].get("armageddon") == 0
+      and build_tournament_cfg(st, dict(common, format="elimination", engines=six[:4], armageddon=99))["params"].get("armageddon") == 8,
+      "the API stores the Armageddon setting for the knockout and the elimination (0 is a setting, 99 becomes 8), no setting means none, a round robin has none")
+gamemod.play_game = stub_draw
+cfg = build_tournament_cfg(st, dict(common, name="armageddon knockout", format="knockout", engines=six[:4], ko_games=2, armageddon=1, concurrency=2))
+t = st.tournaments.create(cfg)
+t.start()
+wait(t)
+snap = t.snapshot()
+sm = snap["structure"]
+ms = [m for r in sm["rounds"] for m in r["matches"]]
+check(t.status == "finished" and len(t.games) == 3 * 5 and sum(1 for g in snap["games"] if g.get("arm")) == 3 and sm["champion"] in six and all(m["winner"] == (m["b"] if m["arm"] == m["a"] else m["a"]) for m in ms),
+      "a knockout of 4 with Armageddon after 1 extra pair, every game drawn: %d games (3 matches x (2 + 2 + 1)), 3 Armageddon games, Black wins each match, champion %s" % (len(t.games), sm["champion"]))
+pgn = t.pgn_text()
+check(pgn.count('[Armageddon "a draw counts as a win for Black"]') == 3 and pgn.count("[Event ") == 15, "...the PGN marks the three Armageddon games (%d tags in %d games)" % (pgn.count("[Armageddon "), pgn.count("[Event ")))
+cfg = build_tournament_cfg(st, dict(common, name="armageddon elimination", format="elimination", engines=six[:4], losses=2, ko_games=2, armageddon=0, concurrency=2))
+t = st.tournaments.create(cfg)
+t.start()
+wait(t)
+snap = t.snapshot()
+sx = snap["structure"]
+armed = [m for bk in sx["brackets"] for rnd in bk["rounds"] for m in rnd["matches"] if m["kind"] == "real" and m.get("arm")] + [f for f in sx["final"] if f.get("arm")]
+check(t.status == "finished" and len(t.games) == 6 * 3 and len(armed) == 6 and sx["champion"] in six and sum(1 for g in snap["games"] if g.get("arm")) == 6 and all(len(m["g"]) == 3 for m in armed),
+      "an elimination of 4 with 2 losses and Armageddon right after the games, every game drawn: %d games (6 matches x (2 + 1)), all 6 matches decided by an Armageddon game, linked to their matches in the drawing" % len(t.games))
+gamemod.play_game = orig
+
 # ----------------------------------------------------------------------------------------------------------------- an engine whose file is gone
 cfg = build_tournament_cfg(st, dict(common, name="gone", format="roundrobin", engines=ids, games=2))
 t = st.tournaments.create(cfg)

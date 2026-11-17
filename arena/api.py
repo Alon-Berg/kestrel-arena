@@ -130,6 +130,9 @@ def build_tournament_cfg(st, p):
               "swiss_rounds": _num(p.get("swiss_rounds"), 5, 1, 50, True), "ko_games": _num(p.get("ko_games"), 2, 2, 1000, True),
               "seeding": p.get("seeding") if p.get("seeding") in ("rating", "random", "list") else "rating",
               "losses": _num(p.get("losses"), 2, 1, MAX_LOSSES, True)}
+    arm = p.get("armageddon")
+    if fmt in ("knockout", "elimination") and arm is not None and arm is not False and arm != "":          # (0 is a setting: right after the games of the match)
+        params["armageddon"] = _num(arm, 3, 0, 8, True)       # extra pairs of games after which an Armageddon game decides a level match; no setting = none
     if fmt == "elimination":
         params["bracket"] = 2                             # the actual bracket with the final ladder (arena/bracket.py); True = the first version of the bracket (its final stage depends on the results), no parameter = the very first elimination: both keep their schedule
     op = p.get("openings") or {}

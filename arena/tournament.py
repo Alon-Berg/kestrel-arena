@@ -472,12 +472,20 @@ class TournamentManager:
     def _dir(self, tid):
         return os.path.join(self.root, tid)
 
+    def _free_id(self):
+        """t<date>_<time>, with a number added when a tournament of the same second exists (two creations in one second used to share one folder and mix their games)."""
+        base = time.strftime("t%Y%m%d_%H%M%S")
+        tid, n = base, 2
+        while os.path.exists(self._dir(tid)):
+            tid, n = "%s_%d" % (base, n), n + 1
+        return tid
+
     def create(self, cfg):
         with self.lock:
             if self.current and self.current.status in ("running", "paused", "stopping"):
                 raise ValueError("A tournament is still running. Stop it first.")
             cfg = dict(cfg)
-            cfg["id"] = cfg.get("id") or time.strftime("t%Y%m%d_%H%M%S")
+            cfg["id"] = cfg.get("id") or self._free_id()
             cfg["created"] = _now_iso()
             cfg["status"] = "ready"
             t = Tournament(cfg, self._dir(cfg["id"]), self.bus, self.data_dir, self.resource_dir)

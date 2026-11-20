@@ -65,6 +65,11 @@ def wait(t, secs=120):
         time.sleep(0.05)
 
 
+# ----------------------------------------------------------------------------------------------------------------- tournaments made in the same second
+pair = [st.tournaments.create(build_tournament_cfg(st, dict(common, name="same second %d" % i, format="roundrobin", engines=ids, games=2))) for i in range(3)]
+check(len({p.id for p in pair}) == 3 and all(os.path.isdir(st.tournaments._dir(p.id)) for p in pair) and all(p.id.startswith("t") for p in pair),
+      "three tournaments created in one second get three different folders: %s" % [p.id for p in pair])
+
 # ----------------------------------------------------------------------------------------------------------------- the API accepts the new format
 cfg = build_tournament_cfg(st, dict(common, name="e", format="elimination", engines=ids, losses=3, ko_games=2))
 check(cfg["format"] == "elimination" and cfg["params"]["losses"] == 3 and cfg["params"]["bracket"] == 2, "the API stores an elimination with 3 losses as a bracket with the final ladder")

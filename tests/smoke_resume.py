@@ -116,7 +116,7 @@ lst = [x for x in st7.tournaments.list() if x["id"] == t6.id][0]
 check(lst["format"] == "elimination" and lst["losses"] == 2 and lst["status"] == "finished", "elimination: the saved list knows the format and the number of losses")
 
 # 4. pause and resume without stopping
-cfg = build_tournament_cfg(st, dict(common, name="pause test", format="roundrobin", engines=ids[:3], games=2))
+cfg = build_tournament_cfg(st, dict(common, name="pause test", format="roundrobin", engines=ids[:3], games=40))      # 3 pairs x 40 games: lasts longer than the 5 s of waiting whatever the speed of the engine
 t5 = st.tournaments.create(cfg)
 t5.start()
 time.sleep(1.0)
@@ -127,9 +127,9 @@ time.sleep(2.0)
 check(len(t5.games) <= n1 + 2 and t5.status == "paused", "paused: games %d -> %d during 2 s, active %d" % (n1, len(t5.games), len(t5.active)))
 t5.resume()
 wait(t5)
-check(t5.status == "finished" and len(t5.games) == 6, "paused tournament resumed and finished (%d games)" % len(t5.games))
+check(t5.status == "finished" and len(t5.games) == 120, "paused tournament resumed and finished (%d games)" % len(t5.games))
 pg = t5.pgn_text()
-check(pg.count("[Event ") == 6 and "pause test" in pg, "PGN export has all games")
+check(pg.count("[Event ") == 120 and "pause test" in pg, "PGN export has all games")
 
 for s in (st, st2, st3, st4, st6, st7):
     s.shutdown()

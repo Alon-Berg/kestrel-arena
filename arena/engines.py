@@ -5,7 +5,9 @@ import re
 import sys
 import threading
 
-KESTREL_ELO = {"3.2": 3581}                           # CCRL-Blitz-style estimate from the roster tournament (1 thread)
+# CCRL-Blitz-style estimates, 1 thread: 3.2 from the roster tournament; the later versions are 3.2 plus the measured gains over it
+# (4.0: +31.9 at 3+0.03 and +26.8 at 5+0.1 against 3.2 in 4,000 / 2,000 games, so about +30; 4.1 has the same search as 4.0; 4.2: +6.7 over 4.1). Estimates, not ratings.
+KESTREL_ELO = {"3.2": 3581, "4.0": 3611, "4.1": 3611, "4.2": 3618}
 VARIANT_RANK = {"avx2": 3, "sse42": 2, "generic": 1}
 
 
@@ -206,9 +208,10 @@ class Registry:
                         rows = json.load(f)
                     break
         rows = rows or []
-        k = KESTREL_ELO.get("3.2")
+        kv = max(KESTREL_ELO, key=lambda v: [int(x) for x in v.split(".")])          # the newest version we have an estimate for
+        k = KESTREL_ELO[kv]
         if k and not any("kestrel" in (r.get("name") or "").lower() for r in rows):
-            rows = rows + [{"name": "Kestrel 3.2", "id_name": "Kestrel 3.2", "rating": k, "ccrl": None}]
+            rows = rows + [{"name": "Kestrel " + kv, "id_name": "Kestrel " + kv, "rating": k, "ccrl": None}]
         return {"source": source, "engines": rows}
 
     @staticmethod

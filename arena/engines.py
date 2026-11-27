@@ -5,9 +5,11 @@ import re
 import sys
 import threading
 
-# CCRL-Blitz-style estimates, 1 thread: 3.2 from the roster tournament; the later versions are 3.2 plus the measured gains over it
-# (4.0: +31.9 at 3+0.03 and +26.8 at 5+0.1 against 3.2 in 4,000 / 2,000 games, so about +30; 4.1 has the same search as 4.0; 4.2: +6.7 over 4.1). Estimates, not ratings.
-KESTREL_ELO = {"3.2": 3581, "4.0": 3611, "4.1": 3611, "4.2": 3618}
+# CCRL-Blitz-style estimates, 1 thread. Anchor: Kestrel 4.2 scored 80.5 of 200 against the 100 roster engines in the full replay of 2026-11-22 = 3594 (bootstrap 95 % 3575-3616);
+# the other versions are 4.2 plus or minus the gains measured in games between the versions (5.0: +43.7 over 4.2 in 7,820 games at 3+0.03 and 5+0.1; 4.2: +6.7 over 4.1;
+# 4.1 has the same search as 4.0; 4.0: +29.9 over 3.2). Gains against the previous version probably overstate the gains against other engines (the chain 3.2 -> 4.2 gave 3618, 24 more
+# than the direct measure), so 5.0 is more likely a little high than low. Estimates, not ratings.
+KESTREL_ELO = {"3.2": 3557, "4.0": 3587, "4.1": 3587, "4.2": 3594, "5.0": 3638}
 VARIANT_RANK = {"avx2": 3, "sse42": 2, "generic": 1}
 
 

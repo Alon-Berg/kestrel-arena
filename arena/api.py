@@ -13,6 +13,7 @@ from .engines import Registry, cpu_variant, quirks_of
 from .events import Bus
 from .formats import FORMATS, MAX_LOSSES
 from .game import DEFAULT_ADJ
+from .live import LiveHub, build_broadcast_html
 from .play import AnalysisSession, PlaySession, apply_move, legal_info
 from .tournament import TournamentManager, normalize_tc
 from .uci import EngineError, UciEngine, probe_engine
@@ -42,6 +43,7 @@ class AppState:
         self.tournaments = TournamentManager(os.path.join(self.data_dir, "tournaments"), self.bus, self.data_dir, self.res_dir)
         self.play = None
         self.analysis = None
+        self.live = LiveHub(self)                          # the read-only live feed (arena/live.py); sharing on the network is off until the user switches it on
         self.token = secrets.token_urlsafe(18)
         self.window = None
         self.port = None
@@ -54,6 +56,7 @@ class AppState:
                     obj.close()
             except Exception:
                 pass
+        self.live.shutdown()
         self.tournaments.shutdown()
 
     # ------------------------------------------------------------------------------------------------ file dialog
@@ -283,6 +286,30 @@ def ep_t_pgn(st, req):
     return Resp(t.pgn_text(), "application/x-chess-pgn; charset=utf-8", name)
 
 
+# ------------------------------------------------------------------------------------------------------------------ live page (the read-only GET data is served without a token, see arena/live.py)
+def ep_live_open(st, req):
+    import webbrowser
+    url = "http://127.0.0.1:%d/live" % st.port
+    return {"url": url, "opened": bool(webbrowser.open(url))}
+
+
+def ep_live_share(st, req):
+    if "on" not in req.body:                                    # GET (and a POST without a switch): the state of the sharing
+        return st.live.share_status()
+    try:
+        return st.live.share_start(req.body.get("port")) if req.body.get("on") else st.live.share_stop()
+    except (OSError, ValueError, TypeError) as e:
+        raise ApiError("The live page cannot be shared: %s" % e, 409)
+
+
+def ep_live_export(st, req):
+    snap = st.live.snapshot()
+    if not snap.get("tournament"):
+        raise ApiError("There is no tournament to export: start one or open a saved one.", 409)
+    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", snap["tournament"].get("name") or snap["tournament"]["id"]) + "_broadcast.html"
+    return Resp(build_broadcast_html(st.res_dir, snap), "text/html; charset=utf-8", name)
+
+
 def ep_legal(st, req):
     try:
         return legal_info(_need(req.body, "fen"))
@@ -425,6 +452,10 @@ ROUTES = [
     ("POST", r"/api/tournament/(?P<tid>[\w.-]+)/delete", ep_t_delete),
     ("GET", r"/api/tournament/(?P<tid>[\w.-]+)/game/(?P<gid>\d+)", ep_t_game),
     ("GET", r"/api/tournament/(?P<tid>[\w.-]+)/pgn", ep_t_pgn),
+    ("POST", r"/api/live/open", ep_live_open),
+    ("GET", r"/api/live/share", ep_live_share),
+    ("POST", r"/api/live/share", ep_live_share),
+    ("GET", r"/api/live/export", ep_live_export),
     ("POST", r"/api/legal", ep_legal),
     ("POST", r"/api/apply", ep_apply),
     ("POST", r"/api/play/new", ep_play_new),

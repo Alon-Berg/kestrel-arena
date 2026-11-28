@@ -11,6 +11,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlparse
 
+from . import live
 from .api import COMPILED, ApiError, AppState, Resp
 
 mimetypes.add_type("text/javascript", ".js")
@@ -80,6 +81,9 @@ class Handler(BaseHTTPRequestHandler):
             u = urlparse(self.path)
             path = u.path
             q = {k: v[0] for k, v in parse_qs(u.query).items()}
+            if method == "GET" and (path in ("/live", "/live/") or path.startswith("/live/api/")):
+                if live.handle_get(self, path, q, self.st):                      # the live page and its read-only data: no token (the same code serves the share server)
+                    return
             if method == "GET" and not path.startswith("/api/"):
                 return self._static(path)
             token = self.headers.get("X-Arena-Token") or q.get("t")

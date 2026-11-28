@@ -94,7 +94,14 @@ def _legal(board, u):
     return mv if mv is not None and mv in board.legal_moves else None
 
 
-def _ask(eng, start_fen, uci, tc, clock, side, timeout, should_stop):
+def _go(eng, lim, timeout, should_stop, on_info):
+    """eng.go, with the callback for the info lines only when there is one (the Live page): callers that do not ask for it call exactly what they always called."""
+    if on_info is None:
+        return eng.go(lim, timeout=timeout, abort=should_stop)
+    return eng.go(lim, timeout=timeout, abort=should_stop, on_info=on_info)
+
+
+def _ask(eng, start_fen, uci, tc, clock, side, timeout, should_stop, on_info=None):
     """Position + go for the side to move; an engine with the 'clock_to_movetime' workaround gets a time per move instead of the clock in very fast games."""
     eng.position(start_fen, uci)
     lim = _limits(tc, clock, side)
@@ -103,15 +110,15 @@ def _ask(eng, start_fen, uci, tc, clock, side, timeout, should_stop):
         lim = shim_limits(lim, side, q)
     elif "movetime" in lim:                              # a fixed time per move: the engine's own constant (Elixir takes 100 ms off every movetime) and minimum apply as well
         lim["movetime"] = int(max(lim["movetime"] + float(q.get("movetime_add", 0)), float(q.get("movetime_min", 0))))
-    return eng.go(lim, timeout=timeout, abort=should_stop)
+    return _go(eng, lim, timeout, should_stop, on_info)
 
 
-RETRY_TRIES = 3                      # the first answer and at most two more tries
+RETRY_TRIES = 3                     # the first answer and at most two more tries
 RETRY_MIN_MS = (20, 100)             # the least time of the second and of the third try
 RETRY_MAX_MS = (150, 300)            # ... and the most
 
 
-def _retry(eng, start_fen, uci, tc, clock, side, timeout, should_stop, wall, last, attempt, margin):
+def _retry(eng, start_fen, uci, tc, clock, side, timeout, should_stop, wall, last, attempt, margin, on_info=None):
     """Another try after an unusable answer (no move, or a move that is not legal: a search that was cut off before its first iteration was done, because the engine was held up for a moment): a time
     per move of at least 20 ms (100 ms for the third try) even when the clock is nearly empty - the engine cannot finish an iteration in less - twice (three times) the time of the previous try
     if that is longer, at most 150 ms (300 ms), and never beyond what the game allows before the move would be a time forfeit.  wall: the time of all tries so far, last: of the previous one.
@@ -131,7 +138,7 @@ def _retry(eng, start_fen, uci, tc, clock, side, timeout, should_stop, wall, las
     q = getattr(eng, "quirks", None) or {}
     if "movetime" in lim:                                # the engine's own constant and minimum apply to this time as well
         lim["movetime"] = int(max(lim["movetime"] + float(q.get("movetime_add", 0)), float(q.get("movetime_min", 0))))
-    return eng.go(lim, timeout=max(0.05, timeout - wall / 1000.0), abort=should_stop)
+    return _go(eng, lim, max(0.05, timeout - wall / 1000.0), should_stop, on_info)
 
 
 def _prepare_game(eng, start_fen, timeout=30.0):
@@ -142,10 +149,12 @@ def _prepare_game(eng, start_fen, timeout=30.0):
     eng.isready()
 
 
-def play_game(spec, white, black, on_update=None, should_stop=None):
+def play_game(spec, white, black, on_update=None, should_stop=None, on_think=None):
     """spec: gid, round, white, black (names), start_fen (or None), opening_moves (uci), tc, adj, margin_ms.
+    on_update(upd) is called after every move; on_think(side, info) for every info line of a search (the Live page; it must be quick).
     Returns the game record (dict). Result '*' with reason 'aborted' means the game was cancelled."""
     tc = spec["tc"]
+    on_think = on_think or spec.get("on_think")
     adj = dict(DEFAULT_ADJ)
     adj.update(spec.get("adj") or {})
     margin = float(spec.get("margin_ms", 600))
@@ -219,14 +228,15 @@ def play_game(spec, white, black, on_update=None, should_stop=None):
         else:
             timeout = 120.0
         board_before = board.copy(stack=False)
+        cb = (lambda inf, _side=side: on_think(_side, inf)) if on_think else None
         try:
-            res = _ask(eng, start_fen, uci, tc, clock, side, timeout, should_stop)
+            res = _ask(eng, start_fen, uci, tc, clock, side, timeout, should_stop, cb)
             if (getattr(eng, "quirks", None) or {}).get("retry_bad_move", is_very_fast(tc)):          # (every engine in very fast games, unless its entry says false)
                 tries, wall, last = 1, res["elapsed_ms"], res["elapsed_ms"]
                 while _legal(board, res.get("bestmove")) is None and tries < RETRY_TRIES and not (should_stop and should_stop()):
                     tries += 1                  # (the position has legal moves: the game would be over otherwise)
                     retries += 1
-                    res = _retry(eng, start_fen, uci, tc, clock, side, timeout, should_stop, wall, last, tries, margin)
+                    res = _retry(eng, start_fen, uci, tc, clock, side, timeout, should_stop, wall, last, tries, margin, cb)
                     last = res["elapsed_ms"]
                     wall += last
         except EngineTimeout:

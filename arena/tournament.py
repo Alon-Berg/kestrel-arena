@@ -3,6 +3,7 @@
 Files per tournament (data/tournaments/<id>/):  config.json (settings, engines, status)  games.jsonl (one finished game per line, with moves).
 A stopped (or crashed) tournament is resumed by loading it again: finished games are skipped, the schedule is regenerated deterministically.
 """
+import itertools
 import json
 import os
 import queue
@@ -15,6 +16,7 @@ import chess
 from . import formats
 from . import game as gamemod
 from . import openings as openmod
+from .live import GATE
 from .pool import EnginePool
 from .uci import EngineError
 
@@ -78,6 +80,8 @@ class Tournament:
         self.done_keys = set()
         self.next_gid = 1
         self.active = {}
+        self.livex = {}                                    # gid -> what the Live page needs about a running game (arena/live.py); the game thread only stores, the hub thread reads
+        self.structure_cache = None                        # (number of finished games, structure) of the last _emit_state
         self.lock = threading.RLock()
         self._save_lock = threading.Lock()
         self.stop_flag = threading.Event()
@@ -150,8 +154,10 @@ class Tournament:
         self.bus.publish(ev)
 
     def _emit_state(self):
+        structure = self.sched.structure(self._games_for_sched())
+        self.structure_cache = (len(self.games), structure)
         self._emit({"type": "tournament", "status": self.status, "done": len(self.games), "total": self.total, "elapsed": round(self.elapsed(), 1),
-                    "active": len(self.active), "error": self.error, "structure": self.sched.structure(self._games_for_sched())})
+                    "active": len(self.active), "error": self.error, "structure": structure})
 
     def _games_for_sched(self):
         return [{"white": g["white"], "black": g["black"], "result": g["result"], "batch": g["batch"], "pair": g["pair"], "gid": g["gid"]} for g in self.games]
@@ -330,14 +336,25 @@ class Tournament:
                 return
         opening = self.book.pick(task["batch"], task["pair"], task["g"] // 2, task["per_pair"])
         board = chess.Board(opening["fen"]) if opening.get("fen") else chess.Board()
-        for u in opening.get("moves") or []:
-            board.push_uci(u)
+        book_uci, book_san = list(opening.get("moves") or []), []
+        for u in book_uci:
+            mv = board.parse_uci(u)                                 # (as push_uci: an illegal opening move raises)
+            book_san.append(board.san(mv))
+            board.push(mv)
+        fen0 = board.fen()
+        tcm = self.cfg.get("tc") or {}
+        clk0 = [int(float(tcm.get("base", 10)) * 1000)] * 2 if tcm.get("mode", "time") == "time" else [0, 0]
         with self.lock:
             gid = self.next_gid
             self.next_gid += 1
-            live = {"gid": gid, "key": task["key"], "round": task["round"], "white": task["white"], "black": task["black"], "ply": len(opening.get("moves") or []),
-                    "fen": board.fen(), "san": [], "clocks": None, "cp": None, "depth": None, "nodes": None, "nps": None, "pv": "", "check": None, "started": time.time()}
+            live = {"gid": gid, "key": task["key"], "round": task["round"], "white": task["white"], "black": task["black"], "ply": len(book_uci),
+                    "fen": fen0, "san": [], "clocks": None, "cp": None, "depth": None, "nodes": None, "nps": None, "pv": "", "check": None, "started": time.time()}
             self.active[gid] = live
+            # for the Live page (arena/live.py): the moves of the engines (one tuple per move, appended before the frame is replaced), the position and clocks after the last move, and the
+            # newest info line of the search that is running; the game thread only assigns, the hub thread only reads
+            lx = {"h": [], "book": len(book_uci), "book_uci": book_uci, "book_san": book_san, "start_fen": opening.get("fen"), "arm": bool(task.get("arm")), "think": None,
+                  "tn": itertools.count(1), "frame": {"ply": len(book_uci), "fen": fen0, "check": None, "clocks": clk0, "t": time.monotonic(), "wait": True}}
+            self.livex[gid] = lx
         self._emit({"type": "game_start", "game": live})
         w = b = None
         rec = None
@@ -356,7 +373,13 @@ class Tournament:
                 spec = {"gid": gid, "round": task["round"], "white": task["white"], "black": task["black"], "start_fen": opening.get("fen"),
                         "opening_moves": opening.get("moves") or [], "tc": self.cfg["tc"], "adj": self.cfg.get("adj"), "margin_ms": self.cfg.get("margin_ms", 600)}
 
+                def on_think(side, inf):                            # every info line of the search that is running, in this game's thread: nothing at all unless somebody watches the live page
+                    if GATE.watched and inf.get("multipv", 1) == 1 and ("cp" in inf or "mate" in inf):
+                        lx["think"] = (lx["frame"]["ply"], side, inf, next(lx["tn"]))
+
                 def on_update(u):
+                    lx["h"].append((u["uci"], u["san"], u["cp"], u["depth"], u["ms"], u["nodes"], u["nps"], u["pv"]))
+                    lx["frame"] = {"ply": u["ply"], "fen": u["fen"], "check": u["check"], "clocks": u["clocks"], "t": time.monotonic(), "wait": False}
                     live.update({"ply": u["ply"], "fen": u["fen"], "san": u["san_list"], "clocks": u["clocks"], "cp": u["cp"], "depth": u["depth"],
                                  "nodes": u["nodes"], "nps": u["nps"], "pv": u["pv"], "check": u["check"], "last": u["uci"]})
                     now = time.monotonic()
@@ -364,6 +387,8 @@ class Tournament:
                         self._last_emit[gid] = now
                         self._emit({"type": "game_update", "gid": gid, "ply": u["ply"], "fen": u["fen"], "san": u["san_list"], "clocks": u["clocks"],
                                     "cp": u["cp"], "depth": u["depth"], "nodes": u["nodes"], "nps": u["nps"], "pv": u["pv"], "check": u["check"], "last": u["uci"]})
+                lx["frame"] = dict(lx["frame"], t=time.monotonic(), wait=False)                 # the clocks of the Live page start here, not while the engines were starting
+                spec["on_think"] = on_think                                                      # (in the spec, so that a replacement of play_game with the old signature still works)
                 rec = gamemod.play_game(spec, w, b, on_update=on_update, should_stop=self.stop_flag.is_set)
                 if rec["reason"] in ("time forfeit", "engine crashed", "engine error", "illegal move", "no move", "no move in time", "engine not responding", "aborted"):
                     keep = False
@@ -377,6 +402,7 @@ class Tournament:
                     self.pool.release(e, keep=keep)
             with self.lock:
                 self.active.pop(gid, None)
+                self.livex.pop(gid, None)
             self._last_emit.pop(gid, None)
         if rec is None or rec["result"] not in ("1-0", "0-1", "1/2-1/2"):
             self._emit({"type": "game_aborted", "gid": gid})

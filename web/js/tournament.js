@@ -323,6 +323,7 @@
     if (st === 'paused') { b('Resume', 'primary', () => act('resume')); b('Stop', 'danger', () => act('stop')); }
     if (st === 'stopped' || st === 'ready' || st === 'error') b('Continue', 'primary', () => act('start'));
     hdr.btns.appendChild(h('a', { class: 'btn sm', href: A.url('/api/tournament/' + s.id + '/pgn'), download: '' }, 'PGN'));
+    b('Live view', '', () => A.post('/api/live/open').then((r) => { if (!r.opened) A.toast('Open ' + r.url + ' in a web browser'); }).catch((e) => A.toast(e.message, 'err')));
     b('Export CSV', '', exportCsv);
     b('Setup', '', () => showSetup());
     const err = A.$('#run-err', runEl);
